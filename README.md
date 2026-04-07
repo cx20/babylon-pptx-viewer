@@ -4,7 +4,7 @@
 
 ## デモ
 
-Babylon.js Playgroundで動作します。ビルド後の単一ファイル(`pptx-viewer.js`)をPlaygroundに貼り付けてください。
+Babylon.js Playground v2 で動作します。Playground v2 は複数ファイル・ESモジュールに対応しているため、各 `.js` ファイルをタブに追加してそのまま実行できます。
 
 ## ファイル構成
 
@@ -219,16 +219,18 @@ var app = {
 - **描画改善**: `slide-renderer.js` の `renderSlide` を修正
 - **UI変更**: `gui-frame.js` を修正
 
-### ビルド（Playground用）
+### Playground での使用
 
-現在ESモジュール構文を使用していますが、Babylon.js Playgroundは単一ファイルを期待します。
-Playgroundで使用する場合は、全モジュールを `createScene` クロージャ内にインライン化する必要があります。
+Babylon.js Playground v2 は以下の機能をサポートしています：
 
-```bash
-# 例: 簡易的な結合（本番ではバンドラ使用推奨）
-# rollup, webpack, esbuild 等で単一ファイルにバンドル
-npx esbuild src/index.js --bundle --format=esm --outfile=pptx-viewer.js
-```
+- **複数ファイル** — VS Code スタイルのタブで各モジュールを別ファイルとして追加可能
+- **ES Modules** — `import` / `export` をそのままブラウザ実行可能なモジュールに変換
+- **NPM モジュール統合** — `jszip` などの外部ライブラリを直接インポート可能
+- **TypeScript IntelliSense** — 自動型取得による補完・定義ジャンプ
+- **Chrome DevTools** — ブレークポイント・ステップ実行などの高度なデバッグ
+- **シェーダーサポート** — `.wgsl` / `.glsl` を別ファイルで管理
+
+各 `.js` ファイルを Playground のタブに追加し、エントリポイントとして `index.js` を実行してください。ローカル開発は Live Server で `index.html` を開いて確認できます。
 
 ### デバッグ
 
