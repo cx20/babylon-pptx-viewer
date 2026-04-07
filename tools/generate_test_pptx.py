@@ -5,8 +5,10 @@ from pathlib import Path
 
 from lxml import etree
 from PIL import Image, ImageDraw
+from pptx.chart.data import CategoryChartData
 from pptx import Presentation
 from pptx.dml.color import RGBColor
+from pptx.enum.chart import XL_CHART_TYPE, XL_LEGEND_POSITION
 from pptx.enum.shapes import MSO_CONNECTOR, MSO_SHAPE
 from pptx.enum.text import PP_ALIGN
 from pptx.oxml.ns import qn
@@ -551,6 +553,74 @@ def make_fixture_07_theme_colors() -> str:
     return out_name
 
 
+def make_fixture_08_bar_chart() -> str:
+    """Fixture 08: clustered column chart matching attached sample values."""
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    # Use API-based white slide background so legend/category labels stay readable.
+    set_slide_background(slide, (255, 255, 255))
+
+    # Layout: top 1/3 for table, bottom 2/3 for chart.
+    # Keep dark slide background, but make chart area white for readability.
+    rows, cols = 5, 4
+    tbl = slide.shapes.add_table(rows, cols, Inches(0.5), Inches(0.25), Inches(9.0), Inches(2.2)).table
+    headers = ["", "増加", "同じ", "減少"]
+    data_rows = [
+        ["SMM", "56", "39", "5"],
+        ["コンテンツ", "55", "42", "3"],
+        ["カスタマイズ", "51", "44", "5"],
+        ["ビデオ広告", "50", "43", "7"],
+    ]
+    for c, h in enumerate(headers):
+        tbl.cell(0, c).text = h
+    for r, row_values in enumerate(data_rows, start=1):
+        for c, v in enumerate(row_values):
+            tbl.cell(r, c).text = v
+
+    chart_data = CategoryChartData()
+    chart_data.categories = ["SMM", "コンテンツ", "カスタマイズ", "ビデオ広告"]
+    chart_data.add_series("増加", (56, 55, 51, 50))
+    chart_data.add_series("同じ", (39, 42, 44, 43))
+    chart_data.add_series("減少", (5, 3, 5, 7))
+
+    chart_shape = slide.shapes.add_chart(
+        XL_CHART_TYPE.COLUMN_CLUSTERED,
+        Inches(0.5), Inches(2.65), Inches(9.0), Inches(4.6),
+        chart_data,
+    )
+    chart = chart_shape.chart
+    chart.has_legend = True
+    chart.legend.position = XL_LEGEND_POSITION.BOTTOM
+    chart.legend.include_in_layout = False
+
+    # Series colors to match sample (lime / yellow / orange)
+    series_colors = [
+        RGBColor(170, 210, 50),
+        RGBColor(220, 190, 50),
+        RGBColor(237, 125, 49),
+    ]
+    for s_idx, series in enumerate(chart.series):
+        fill = series.format.fill
+        fill.solid()
+        fill.fore_color.rgb = series_colors[s_idx]
+
+    # API-based white plot area
+    if hasattr(chart, "plot_area") and hasattr(chart.plot_area, "format"):
+        chart.plot_area.format.fill.solid()
+        chart.plot_area.format.fill.fore_color.rgb = RGBColor(255, 255, 255)
+
+    value_axis = chart.value_axis
+    value_axis.maximum_scale = 60
+    value_axis.minimum_scale = 0
+    value_axis.major_unit = 10
+
+    add_notes(slide, "Fixture 08: clustered column chart (increase/same/decrease)")
+
+    out_name = "fixture-08-bar-chart.pptx"
+    prs.save(OUT_DIR / out_name)
+    return out_name
+
+
 def build_manifest(files: list[str]) -> None:
     manifest = {
         "version": 1,
@@ -640,6 +710,18 @@ def build_manifest(files: list[str]) -> None:
                     "notes_non_empty": True,
                 },
             },
+            {
+                "file": files[7],
+                "purpose": "clustered column chart with 3 series on dark background",
+                "expected": {
+                    "slides": 1,
+                    "text_min": 1,
+                    "shapes_min": 1,
+                    "images": 0,
+                    "tables": 0,
+                    "notes_non_empty": True,
+                },
+            },
         ],
     }
     MANIFEST_PATH.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
@@ -657,8 +739,9 @@ def main() -> None:
     f6 = make_fixture_06_paragraph_spacing()
 
     f7 = make_fixture_07_theme_colors()
+    f8 = make_fixture_08_bar_chart()
 
-    build_manifest([f1, f2, f3, f4, f5, f6, f7])
+    build_manifest([f1, f2, f3, f4, f5, f6, f7, f8])
 
     print("Generated fixtures:")
     for p in sorted(OUT_DIR.glob("*.pptx")):

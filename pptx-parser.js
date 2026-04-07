@@ -9,6 +9,158 @@ import { extractBackground, extractBlipEffects } from "./background.js";
 import { extractPlaceholderStyles, extractMasterTxStyles } from "./style-inheritance.js";
 import { parseSlideXml } from "./slide-parser.js";
 
+var C_NS = "http://schemas.openxmlformats.org/drawingml/2006/chart";
+
+function getChartText(node) {
+    if (!node) return "";
+    var v = node.getElementsByTagNameNS(C_NS, "v")[0];
+    if (v && v.textContent) return v.textContent;
+    var t = node.getElementsByTagNameNS(C_NS, "t")[0];
+    if (t && t.textContent) return t.textContent;
+    return "";
+}
+
+function extractSeriesName(serNode) {
+    if (!serNode) return "Series";
+    var tx = serNode.getElementsByTagNameNS(C_NS, "tx")[0];
+    if (!tx) return "Series";
+    var strRef = tx.getElementsByTagNameNS(C_NS, "strRef")[0];
+    if (strRef) {
+        var strCache = strRef.getElementsByTagNameNS(C_NS, "strCache")[0];
+        if (strCache) {
+            var pt = strCache.getElementsByTagNameNS(C_NS, "pt")[0];
+            if (pt) {
+                var pv = getChartText(pt);
+                if (pv) return pv;
+            }
+        }
+    }
+    var tv = tx.getElementsByTagNameNS(C_NS, "v")[0];
+    if (tv && tv.textContent) return tv.textContent;
+    return "Series";
+}
+
+function extractCategoryValues(serNode) {
+    var values = [];
+    if (!serNode) return values;
+    var cat = serNode.getElementsByTagNameNS(C_NS, "cat")[0];
+    if (!cat) return values;
+    var strRef = cat.getElementsByTagNameNS(C_NS, "strRef")[0];
+    if (strRef) {
+        var strCache = strRef.getElementsByTagNameNS(C_NS, "strCache")[0];
+        if (strCache) {
+            var pts = strCache.getElementsByTagNameNS(C_NS, "pt");
+            for (var i = 0; i < pts.length; i++) {
+                values.push(getChartText(pts[i]));
+            }
+            return values;
+        }
+    }
+    var numRef = cat.getElementsByTagNameNS(C_NS, "numRef")[0];
+    if (numRef) {
+        var numCache = numRef.getElementsByTagNameNS(C_NS, "numCache")[0];
+        if (numCache) {
+            var npts = numCache.getElementsByTagNameNS(C_NS, "pt");
+            for (var j = 0; j < npts.length; j++) {
+                values.push(getChartText(npts[j]));
+            }
+        }
+    }
+    return values;
+}
+
+function extractNumValues(serNode) {
+    var values = [];
+    if (!serNode) return values;
+    var val = serNode.getElementsByTagNameNS(C_NS, "val")[0];
+    if (!val) return values;
+    var numRef = val.getElementsByTagNameNS(C_NS, "numRef")[0];
+    if (numRef) {
+        var numCache = numRef.getElementsByTagNameNS(C_NS, "numCache")[0];
+        if (numCache) {
+            var pts = numCache.getElementsByTagNameNS(C_NS, "pt");
+            for (var i = 0; i < pts.length; i++) {
+                var t = getChartText(pts[i]);
+                var n = parseFloat(t);
+                values.push(Number.isFinite(n) ? n : 0);
+            }
+            return values;
+        }
+    }
+    var numLit = val.getElementsByTagNameNS(C_NS, "numLit")[0];
+    if (numLit) {
+        var lpts = numLit.getElementsByTagNameNS(C_NS, "pt");
+        for (var j = 0; j < lpts.length; j++) {
+            var lt = getChartText(lpts[j]);
+            var ln = parseFloat(lt);
+            values.push(Number.isFinite(ln) ? ln : 0);
+        }
+    }
+    return values;
+}
+
+async function buildChartDataMap(zip, slideBasePath, relsAll) {
+    var map = {};
+    if (!relsAll) return map;
+    for (var rId in relsAll) {
+        var target = relsAll[rId] || "";
+        if (target.indexOf("chart") === -1 || target.indexOf(".xml") === -1) continue;
+        var fullPath = (slideBasePath + target).replace(/[^/]+\/\.\.\//g, "");
+        var cf = zip.file(fullPath);
+        if (!cf) continue;
+        try {
+            var cdoc = new DOMParser().parseFromString(await cf.async("string"), "application/xml");
+            var chart = cdoc.getElementsByTagNameNS(C_NS, "chart")[0];
+            if (!chart) continue;
+            var plotArea = chart.getElementsByTagNameNS(C_NS, "plotArea")[0];
+            if (!plotArea) continue;
+            var chartTypeNode =
+                plotArea.getElementsByTagNameNS(C_NS, "barChart")[0] ||
+                plotArea.getElementsByTagNameNS(C_NS, "lineChart")[0] ||
+                plotArea.getElementsByTagNameNS(C_NS, "pieChart")[0] ||
+                plotArea.getElementsByTagNameNS(C_NS, "areaChart")[0] ||
+                null;
+            if (!chartTypeNode) continue;
+
+            var serNodes = chartTypeNode.getElementsByTagNameNS(C_NS, "ser");
+            if (!serNodes || serNodes.length === 0) continue;
+
+            var categories = [];
+            var series = [];
+            var maxValue = 0;
+            for (var i = 0; i < serNodes.length; i++) {
+                var s = serNodes[i];
+                var cats = extractCategoryValues(s);
+                if (categories.length === 0 && cats.length > 0) categories = cats;
+                var vals = extractNumValues(s);
+                for (var v = 0; v < vals.length; v++) {
+                    if (vals[v] > maxValue) maxValue = vals[v];
+                }
+                series.push({
+                    name: extractSeriesName(s),
+                    values: vals
+                });
+            }
+
+            if (categories.length === 0 && series.length > 0) {
+                var fallbackLen = series[0].values.length;
+                for (var c = 0; c < fallbackLen; c++) categories.push(String(c + 1));
+            }
+
+            map[rId] = {
+                type: chartTypeNode.localName,
+                categories: categories,
+                series: series,
+                maxValue: maxValue
+            };
+            console.log("[PPTX] Chart loaded for " + rId + ": type=" + chartTypeNode.localName + " cats=" + categories.length + " series=" + series.length);
+        } catch (e) {
+            console.warn("[PPTX] Failed to parse chart for " + rId + ":", e);
+        }
+    }
+    return map;
+}
+
 async function parsePptx(arrayBuffer) {
     var t0 = performance.now();
     console.log("[PPTX] === Starting PPTX parse ===");
@@ -67,6 +219,9 @@ async function parsePptx(arrayBuffer) {
         // Build image map
         var images = await buildImageMap(zip, "ppt/slides/", slideRels.images);
         console.log("[PPTX] Slide " + sf.num + " images loaded: " + Object.keys(images).filter(function(k){return !!images[k];}).length);
+
+        // Build chart data map from related chart parts
+        var chartDataMap = await buildChartDataMap(zip, "ppt/slides/", slideRels.all);
 
         // === Background inheritance: slide → layout → master ===
         var bgResult = await extractBackground(xmlStr, zip, "ppt/slides/", slideRels.all, slideW, slideH);
@@ -138,7 +293,7 @@ async function parsePptx(arrayBuffer) {
             if (!layoutStyles.subTitle) layoutStyles.subTitle = {};
             layoutStyles.subTitle.fontRefColor = masterTxStyles.phFontRef.body;
         }
-        var parsed = parseSlideXml(xmlStr, slideW, slideH, images, slideRels.all, hasBgImage, false, layoutStyles);
+        var parsed = parseSlideXml(xmlStr, slideW, slideH, images, slideRels.all, hasBgImage, false, layoutStyles, chartDataMap);
         console.log("[PPTX] Slide " + sf.num + " own elements: " + parsed.elements.length);
 
         // Parse layout shapes (non-placeholder decorations only)
@@ -151,7 +306,7 @@ async function parsePptx(arrayBuffer) {
                 var layoutRels2 = await parseRelsFile(zip, layoutPath2.replace(/([^/]+)$/, "_rels/$1.rels"));
                 var layoutImgs = await buildImageMap(zip, layoutBase2, layoutRels2.images);
                 var layoutParsed = parseSlideXml(
-                    await layoutFile.async("string"), slideW, slideH, layoutImgs, layoutRels2.all, hasBgImage, true
+                    await layoutFile.async("string"), slideW, slideH, layoutImgs, layoutRels2.all, hasBgImage, true, {}, {}
                 );
                 console.log("[PPTX]   layout contributed " + layoutParsed.elements.length + " elements");
                 parsed.elements = layoutParsed.elements.concat(parsed.elements);

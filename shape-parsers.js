@@ -12,6 +12,7 @@ function parseShapeTree(spTreeNode, slideW, slideH, images, relsAll, opts) {
     var skipPlaceholders = opts.skipPlaceholders || false;
     var hasBgImage = opts.hasBgImage || false;
     var layoutStyles = opts.layoutStyles || {};
+    var chartDataMap = opts.chartDataMap || {};
     // Prefer theme text color regardless of background image presence.
     // Per-template placeholder/style inheritance can still override this later.
     var defaultTextColor = themeColors.tx1 || "#333";
@@ -66,7 +67,7 @@ function parseShapeTree(spTreeNode, slideW, slideH, images, relsAll, opts) {
         }
         // --- graphicFrame (chart / table / diagram) ---
         else if (localName === "graphicFrame") {
-            parseGraphicFrame(child, elements, slideW, slideH, images, relsAll, defaultTextColor, toFracX, toFracY, toFracW, toFracH);
+            parseGraphicFrame(child, elements, slideW, slideH, images, relsAll, chartDataMap, defaultTextColor, toFracX, toFracY, toFracW, toFracH);
         }
     }
     return elements;
@@ -336,6 +337,7 @@ function parseGrpSp(grpSp, elements, slideW, slideH, images, relsAll, parentOpts
         skipPlaceholders: parentOpts ? parentOpts.skipPlaceholders : false,
         hasBgImage: parentOpts ? parentOpts.hasBgImage : false,
         layoutStyles: parentOpts ? (parentOpts.layoutStyles || {}) : {},
+        chartDataMap: parentOpts ? (parentOpts.chartDataMap || {}) : {},
         gOffX: newGOffX, gOffY: newGOffY,
         gScaleX: newGScaleX, gScaleY: newGScaleY
     };
@@ -346,7 +348,7 @@ function parseGrpSp(grpSp, elements, slideW, slideH, images, relsAll, parentOpts
 }
 
 // --- Parse graphicFrame (chart / table / diagram) ---
-function parseGraphicFrame(gf, elements, slideW, slideH, images, relsAll, defTextColor, fx, fy, fw, fh) {
+function parseGraphicFrame(gf, elements, slideW, slideH, images, relsAll, chartDataMap, defTextColor, fx, fy, fw, fh) {
     // graphicFrame uses p:xfrm, not a:xfrm
     var xfrm = gf.getElementsByTagNameNS(P_NS, "xfrm")[0];
     if (!xfrm) xfrm = gf.getElementsByTagNameNS(A_NS, "xfrm")[0];
@@ -385,6 +387,21 @@ function parseGraphicFrame(gf, elements, slideW, slideH, images, relsAll, defTex
     var uri = graphicData ? (graphicData.getAttribute("uri") || "") : "";
     console.log("[GF] graphicFrame at (" + fracX.toFixed(3) + "," + fracY.toFixed(3) + ") size=(" + fracW.toFixed(3) + "," + fracH.toFixed(3) + ") uri=" + uri + " hasGraphicData=" + !!graphicData);
 
+    // Chart: render clustered bars from pre-parsed chart cache when available
+    if (uri.indexOf("chart") !== -1 && graphicData) {
+        var chartNode = null;
+        for (var cni = 0; cni < graphicData.childNodes.length; cni++) {
+            var child = graphicData.childNodes[cni];
+            if (child.nodeType === 1 && child.localName === "chart") { chartNode = child; break; }
+        }
+        var chartRid = chartNode ? (chartNode.getAttribute("r:id") || chartNode.getAttributeNS(R_NS, "id") || "") : "";
+        var chartData = chartRid ? chartDataMap[chartRid] : null;
+        if (chartData && chartData.type === "barChart") {
+            renderBarChart(chartData, elements, fracX, fracY, fracW, fracH, defTextColor);
+            return;
+        }
+    }
+
     // Table (a:tbl)
     if (uri.indexOf("table") !== -1 || uri.indexOf("dgm") !== -1) {
         parseTable(graphicData, elements, fracX, fracY, fracW, fracH, defTextColor);
@@ -407,6 +424,112 @@ function parseGraphicFrame(gf, elements, slideW, slideH, images, relsAll, defTex
         x: fracX, y: fracY + fracH * 0.35, w: fracW,
         fontSize: 12, color: "#666", fontWeight: "normal", fontStyle: "normal", align: "center"
     }));
+}
+
+function renderBarChart(chartData, elements, fracX, fracY, fracW, fracH, defTextColor) {
+    var categories = chartData.categories || [];
+    var series = chartData.series || [];
+    if (categories.length === 0 || series.length === 0) return;
+
+    var topPad = fracH * 0.06;
+    var bottomPad = fracH * 0.20;
+    var leftPad = fracW * 0.08;
+    var rightPad = fracW * 0.04;
+    var plotX = fracX + leftPad;
+    var plotY = fracY + topPad;
+    var plotW = Math.max(0.01, fracW - leftPad - rightPad);
+    var plotH = Math.max(0.01, fracH - topPad - bottomPad);
+
+    // PowerPoint-like chart area panel.
+    elements.push(normalizeElement({
+        type: "shape", shape: "rect",
+        x: fracX, y: fracY, w: fracW, h: fracH,
+        fillColor: "#ECECEC", strokeColor: "#D4D4D4", thickness: 1
+    }));
+
+    // Plot area is slightly brighter than chart area.
+    elements.push(normalizeElement({
+        type: "shape", shape: "rect",
+        x: plotX, y: plotY, w: plotW, h: plotH,
+        fillColor: "#F8F8F8", strokeColor: "#CFCFCF", thickness: 1
+    }));
+
+    var maxV = Math.max(1, chartData.maxValue || 1);
+    var axisMax = Math.ceil(maxV / 10) * 10;
+    if (axisMax <= 0) axisMax = 10;
+
+    // Horizontal grid lines + Y labels
+    for (var gi = 0; gi <= 6; gi++) {
+        var t = gi / 6;
+        var gy = plotY + plotH * t;
+        var value = Math.round(axisMax * (1 - t));
+        elements.push(normalizeElement({
+            type: "shape", shape: "line",
+            x1: plotX, y1: gy,
+            x2: plotX + plotW, y2: gy,
+            color: "#CCCCCC", thickness: 1
+        }));
+        elements.push(normalizeElement({
+            type: "text", text: String(value),
+            x: plotX - fracW * 0.05, y: gy - fracH * 0.015, w: fracW * 0.04,
+            fontSize: 10, color: "#666666", align: "right"
+        }));
+    }
+
+    // Bars
+    var groupW = plotW / categories.length;
+    var innerPad = groupW * 0.12;
+    var barGap = groupW * 0.06;
+    var barsAreaW = groupW - innerPad * 2;
+    var barW = Math.max(groupW * 0.08, (barsAreaW - barGap * (series.length - 1)) / series.length);
+
+    var defaultSeriesColors = ["#AAD232", "#DCBE32", "#ED7D31", "#5B9BD5", "#70AD47"];
+
+    for (var ci = 0; ci < categories.length; ci++) {
+        var gx = plotX + ci * groupW + innerPad;
+        for (var si = 0; si < series.length; si++) {
+            var s = series[si];
+            var val = (s.values && ci < s.values.length) ? s.values[ci] : 0;
+            val = Number.isFinite(val) ? val : 0;
+            var bh = plotH * (Math.max(0, val) / axisMax);
+            var bx = gx + si * (barW + barGap);
+            var by = plotY + plotH - bh;
+            elements.push(normalizeElement({
+                type: "shape", shape: "rect",
+                x: bx, y: by, w: barW, h: Math.max(fracH * 0.003, bh),
+                fillColor: defaultSeriesColors[si % defaultSeriesColors.length],
+                strokeColor: "transparent", thickness: 0
+            }));
+        }
+
+        // Category labels
+        elements.push(normalizeElement({
+            type: "text", text: categories[ci],
+            x: plotX + ci * groupW, y: plotY + plotH + fracH * 0.02, w: groupW,
+            fontSize: 11, color: "#666666", align: "center"
+        }));
+    }
+
+    // Legend at bottom-center
+    var legY = fracY + fracH - fracH * 0.06;
+    var blockW = fracW * 0.06;
+    var gapW = fracW * 0.03;
+    var totalW = series.length * (blockW + gapW + fracW * 0.12);
+    var curX = fracX + (fracW - totalW) / 2;
+    for (var li = 0; li < series.length; li++) {
+        var c = defaultSeriesColors[li % defaultSeriesColors.length];
+        elements.push(normalizeElement({
+            type: "shape", shape: "rect",
+            x: curX, y: legY, w: blockW, h: fracH * 0.02,
+            fillColor: c, strokeColor: "transparent", thickness: 0
+        }));
+        elements.push(normalizeElement({
+            type: "text", text: series[li].name || ("Series " + (li + 1)),
+            x: curX + blockW + fracW * 0.01, y: legY - fracH * 0.008, w: fracW * 0.12,
+            fontSize: 10, color: "#666666", align: "left"
+        }));
+        curX += blockW + gapW + fracW * 0.12;
+    }
 }
 
 // --- Parse a:tbl (table) from graphicData ---
