@@ -4,7 +4,7 @@
 
 import { SLIDE_EMU_W, SLIDE_EMU_H } from "./constants.js";
 import { parseThemeXml } from "./color-utils.js";
-import { parseRelsFile, buildImageMap } from "./zip-helpers.js";
+import { parseRelsFile, buildImageMap, loadImageAsDataUrl } from "./zip-helpers.js";
 import { extractBackground, extractBlipEffects } from "./background.js";
 import { extractPlaceholderStyles, extractMasterTxStyles } from "./style-inheritance.js";
 import { parseSlideXml } from "./slide-parser.js";
@@ -213,15 +213,20 @@ async function buildDiagramDataMap(zip, slideBasePath, relsAll) {
             drawingDoc: null,
             layoutDoc: null,
             quickStyleDoc: null,
-            colorsDoc: null
+            colorsDoc: null,
+            drawingImageMap: {}
         };
+        var drawingPath = null;
 
         // 1) Prefer data part local rels if present
         for (var drId in rels.all) {
             var partTarget = rels.all[drId] || "";
             var fullPath = resolvePartPath(dataDir, partTarget);
             var lower = fullPath.toLowerCase();
-            if (lower.indexOf("drawing") !== -1) entry.drawingDoc = await loadXmlPart(zip, fullPath);
+            if (lower.indexOf("drawing") !== -1) {
+                entry.drawingDoc = await loadXmlPart(zip, fullPath);
+                if (entry.drawingDoc) drawingPath = fullPath;
+            }
             else if (lower.indexOf("layout") !== -1) entry.layoutDoc = await loadXmlPart(zip, fullPath);
             else if (lower.indexOf("quickstyle") !== -1) entry.quickStyleDoc = await loadXmlPart(zip, fullPath);
             else if (lower.indexOf("colors") !== -1) entry.colorsDoc = await loadXmlPart(zip, fullPath);
@@ -233,7 +238,9 @@ async function buildDiagramDataMap(zip, slideBasePath, relsAll) {
             if (extNodes && extNodes.length > 0) {
                 var drawingRid = extNodes[0].getAttribute("relId") || extNodes[0].getAttribute("r:relId") || "";
                 if (drawingRid && relsAll[drawingRid]) {
-                    entry.drawingDoc = await loadXmlPart(zip, resolvePartPath(slideBasePath, relsAll[drawingRid]));
+                    var fullDrawingPath = resolvePartPath(slideBasePath, relsAll[drawingRid]);
+                    entry.drawingDoc = await loadXmlPart(zip, fullDrawingPath);
+                    if (entry.drawingDoc) drawingPath = fullDrawingPath;
                 }
             }
         }
@@ -242,10 +249,24 @@ async function buildDiagramDataMap(zip, slideBasePath, relsAll) {
         if (!entry.layoutDoc && globalLayoutPath) entry.layoutDoc = await loadXmlPart(zip, globalLayoutPath);
         if (!entry.quickStyleDoc && globalQuickStylePath) entry.quickStyleDoc = await loadXmlPart(zip, globalQuickStylePath);
         if (!entry.colorsDoc && globalColorsPath) entry.colorsDoc = await loadXmlPart(zip, globalColorsPath);
-        if (!entry.drawingDoc && globalDrawingPath) entry.drawingDoc = await loadXmlPart(zip, globalDrawingPath);
+        if (!entry.drawingDoc && globalDrawingPath) {
+            entry.drawingDoc = await loadXmlPart(zip, globalDrawingPath);
+            if (entry.drawingDoc) drawingPath = globalDrawingPath;
+        }
+
+        if (drawingPath) {
+            var drawingBase = drawingPath.replace(/[^/]*$/, "");
+            var drawingRelsPath = drawingPath.replace(/([^/]+)$/, "_rels/$1.rels");
+            var drawingRels = await parseRelsFile(zip, drawingRelsPath);
+            for (var imgRid in drawingRels.all) {
+                var imgTarget = drawingRels.all[imgRid] || "";
+                var imgData = await loadImageAsDataUrl(zip, drawingBase, imgTarget);
+                if (imgData) entry.drawingImageMap[imgRid] = imgData;
+            }
+        }
 
         map[rId] = entry;
-        console.log("[PPTX] Diagram loaded for " + rId + ": data=" + !!entry.dataDoc + " drawing=" + !!entry.drawingDoc + " quickStyle=" + !!entry.quickStyleDoc + " colors=" + !!entry.colorsDoc);
+        console.log("[PPTX] Diagram loaded for " + rId + ": data=" + !!entry.dataDoc + " drawing=" + !!entry.drawingDoc + " quickStyle=" + !!entry.quickStyleDoc + " colors=" + !!entry.colorsDoc + " drawImages=" + Object.keys(entry.drawingImageMap).length);
     }
 
     return map;
