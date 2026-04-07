@@ -17,6 +17,50 @@ function applyTintOverlay(container, bgTint, name) {
     container.addControl(tintRect);
 }
 
+function createChevronDataUrl(widthPx, heightPx, fillColor, strokeColor, strokeWidth) {
+    var w = Math.max(8, Math.round(widthPx));
+    var h = Math.max(8, Math.round(heightPx));
+    var canvas = document.createElement("canvas");
+    canvas.width = w;
+    canvas.height = h;
+    var ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+
+    // Make arrow tip blunter (closer to ~90deg) by reducing tip depth.
+    var tipBaseInset = Math.max(8, Math.round(w * 0.20));
+    var notchInset = Math.max(6, Math.round(w * 0.16));
+    var sidePad = Math.max(3, Math.round(w * 0.14));
+    var xL = sidePad;
+    var xR = w - sidePad;
+    var y1 = Math.round(h * 0.12);
+    var y2 = Math.round(h * 0.88);
+    var mid = Math.round(h * 0.5);
+
+    ctx.beginPath();
+    ctx.moveTo(xL, y1);
+    ctx.lineTo(xR - tipBaseInset, y1);
+    ctx.lineTo(xR, mid);
+    ctx.lineTo(xR - tipBaseInset, y2);
+    ctx.lineTo(xL, y2);
+    ctx.lineTo(xL + notchInset, mid);
+    ctx.closePath();
+
+    var hasFill = fillColor && fillColor !== "transparent";
+    if (hasFill) {
+        ctx.fillStyle = fillColor;
+        ctx.fill();
+    }
+
+    var hasStroke = strokeColor && strokeColor !== "transparent";
+    if (hasStroke && strokeWidth > 0) {
+        ctx.lineWidth = strokeWidth;
+        ctx.strokeStyle = strokeColor;
+        ctx.stroke();
+    }
+
+    return canvas.toDataURL("image/png");
+}
+
 // Render a single text element into a GUI container
 function renderTextElement(el, container, canvasW, canvasH, fontScale) {
     var tb = new BABYLON.GUI.TextBlock();
@@ -45,6 +89,7 @@ function renderTextElement(el, container, canvasW, canvasH, fontScale) {
     if (el.align === "center") tb.textHorizontalAlignment = BABYLON.GUI.Control.HORIZONTAL_ALIGNMENT_CENTER;
     else if (el.align === "right") tb.textHorizontalAlignment = BABYLON.GUI.Control.HORIZONTAL_ALIGNMENT_RIGHT;
     else tb.textHorizontalAlignment = BABYLON.GUI.Control.HORIZONTAL_ALIGNMENT_LEFT;
+    tb.textVerticalAlignment = BABYLON.GUI.Control.VERTICAL_ALIGNMENT_TOP;
     tb.left = (el.x * canvasW) + "px"; tb.top = (el.y * canvasH) + "px";
     tb.horizontalAlignment = BABYLON.GUI.Control.HORIZONTAL_ALIGNMENT_LEFT;
     tb.verticalAlignment = BABYLON.GUI.Control.VERTICAL_ALIGNMENT_TOP;
@@ -82,26 +127,48 @@ export function renderSlide(app) {
                 var len = Math.sqrt(dx * dx + dy * dy), ang = Math.atan2(dy, dx);
                 var le = new BABYLON.GUI.Rectangle();
                 le.width = len + "px"; le.height = (el.thickness || 2) + "px";
-                le.background = el.color || "#000"; le.thickness = 0;
+                le.background = el.strokeColor || el.color || "#000"; le.thickness = 0;
                 le.left = ((x1 + x2) / 2 - CANVAS_W / 2) + "px";
                 le.top = ((y1 + y2) / 2 - CANVAS_H / 2) + "px";
                 le.rotation = ang; sLayer.addControl(le);
             } else if (ELLIPSE_SHAPES.indexOf(el.shape) >= 0) {
+                var ellStrokeW = el.thickness !== undefined ? el.thickness : (el.borderWidth || 0);
+                var ellStrokeColor = el.strokeColor || el.borderColor || "transparent";
                 var ell = new BABYLON.GUI.Ellipse();
                 ell.left = (el.x * CANVAS_W) + "px"; ell.top = (el.y * CANVAS_H) + "px";
                 ell.width = (el.w * CANVAS_W) + "px"; ell.height = (el.h * CANVAS_H) + "px";
                 ell.background = el.fillColor || "transparent";
-                ell.thickness = el.borderWidth || 0; ell.color = el.borderColor || "transparent";
+                ell.thickness = ellStrokeW; ell.color = ellStrokeColor;
                 ell.horizontalAlignment = BABYLON.GUI.Control.HORIZONTAL_ALIGNMENT_LEFT;
                 ell.verticalAlignment = BABYLON.GUI.Control.VERTICAL_ALIGNMENT_TOP;
                 if (el.rotation) ell.rotation = el.rotation * Math.PI / 180;
                 sLayer.addControl(ell);
+            } else if (el.shape === "chevron") {
+                var cheStrokeW = el.thickness !== undefined ? el.thickness : (el.borderWidth || 0);
+                var cheStrokeColor = el.strokeColor || el.borderColor || "transparent";
+                var che = new BABYLON.GUI.Rectangle();
+                che.left = (el.x * CANVAS_W) + "px"; che.top = (el.y * CANVAS_H) + "px";
+                che.width = (el.w * CANVAS_W) + "px"; che.height = (el.h * CANVAS_H) + "px";
+                che.thickness = 0; che.background = "transparent";
+                che.horizontalAlignment = BABYLON.GUI.Control.HORIZONTAL_ALIGNMENT_LEFT;
+                che.verticalAlignment = BABYLON.GUI.Control.VERTICAL_ALIGNMENT_TOP;
+                if (el.rotation) che.rotation = el.rotation * Math.PI / 180;
+
+                var cheData = createChevronDataUrl(el.w * CANVAS_W, el.h * CANVAS_H, el.fillColor || "transparent", cheStrokeColor, cheStrokeW);
+                if (cheData) {
+                    var cheImg = new BABYLON.GUI.Image("chev_" + Math.random(), cheData);
+                    cheImg.stretch = BABYLON.GUI.Image.STRETCH_FILL;
+                    che.addControl(cheImg);
+                }
+                sLayer.addControl(che);
             } else {
+                var rectStrokeW = el.thickness !== undefined ? el.thickness : (el.borderWidth || 0);
+                var rectStrokeColor = el.strokeColor || el.borderColor || "transparent";
                 var rect = new BABYLON.GUI.Rectangle();
                 rect.left = (el.x * CANVAS_W) + "px"; rect.top = (el.y * CANVAS_H) + "px";
                 rect.width = (el.w * CANVAS_W) + "px"; rect.height = (el.h * CANVAS_H) + "px";
                 rect.background = el.fillColor || "transparent";
-                rect.thickness = el.borderWidth || 0; rect.color = el.borderColor || "transparent";
+                rect.thickness = rectStrokeW; rect.color = rectStrokeColor;
                 if (ROUND_RECT_SHAPES.indexOf(el.shape) >= 0) {
                     rect.cornerRadius = Math.min(el.w * CANVAS_W, el.h * CANVAS_H) * 0.15;
                 }
@@ -157,13 +224,41 @@ export function buildThumbnails(app) {
         // Render mini elements
         slide.elements.forEach(function (el) {
             if (el.type === "shape" && el.shape !== "line" && el.fillColor && el.fillColor !== "transparent") {
-                var sr = new BABYLON.GUI.Rectangle();
-                sr.width = (el.w * TW) + "px"; sr.height = (el.h * TH) + "px";
-                sr.left = (el.x * TW) + "px"; sr.top = (el.y * TH) + "px";
-                sr.background = el.fillColor; sr.thickness = 0;
-                sr.horizontalAlignment = BABYLON.GUI.Control.HORIZONTAL_ALIGNMENT_LEFT;
-                sr.verticalAlignment = BABYLON.GUI.Control.VERTICAL_ALIGNMENT_TOP;
-                th.addControl(sr);
+                if (ELLIPSE_SHAPES.indexOf(el.shape) >= 0) {
+                    var se = new BABYLON.GUI.Ellipse();
+                    se.width = (el.w * TW) + "px"; se.height = (el.h * TH) + "px";
+                    se.left = (el.x * TW) + "px"; se.top = (el.y * TH) + "px";
+                    se.background = el.fillColor;
+                    se.thickness = 0;
+                    se.horizontalAlignment = BABYLON.GUI.Control.HORIZONTAL_ALIGNMENT_LEFT;
+                    se.verticalAlignment = BABYLON.GUI.Control.VERTICAL_ALIGNMENT_TOP;
+                    if (el.rotation) se.rotation = el.rotation * Math.PI / 180;
+                    th.addControl(se);
+                } else if (el.shape === "chevron") {
+                    var cheDataThumb = createChevronDataUrl(el.w * TW, el.h * TH, el.fillColor || "transparent", "transparent", 0);
+                    if (cheDataThumb) {
+                        var sc = new BABYLON.GUI.Rectangle();
+                        sc.width = (el.w * TW) + "px"; sc.height = (el.h * TH) + "px";
+                        sc.left = (el.x * TW) + "px"; sc.top = (el.y * TH) + "px";
+                        sc.thickness = 0; sc.background = "transparent";
+                        sc.horizontalAlignment = BABYLON.GUI.Control.HORIZONTAL_ALIGNMENT_LEFT;
+                        sc.verticalAlignment = BABYLON.GUI.Control.VERTICAL_ALIGNMENT_TOP;
+                        if (el.rotation) sc.rotation = el.rotation * Math.PI / 180;
+                        var simg = new BABYLON.GUI.Image("th_chev_" + idx + "_" + Math.random().toString(36).substr(2, 4), cheDataThumb);
+                        simg.stretch = BABYLON.GUI.Image.STRETCH_FILL;
+                        sc.addControl(simg);
+                        th.addControl(sc);
+                    }
+                } else {
+                    var sr = new BABYLON.GUI.Rectangle();
+                    sr.width = (el.w * TW) + "px"; sr.height = (el.h * TH) + "px";
+                    sr.left = (el.x * TW) + "px"; sr.top = (el.y * TH) + "px";
+                    sr.background = el.fillColor; sr.thickness = 0;
+                    sr.horizontalAlignment = BABYLON.GUI.Control.HORIZONTAL_ALIGNMENT_LEFT;
+                    sr.verticalAlignment = BABYLON.GUI.Control.VERTICAL_ALIGNMENT_TOP;
+                    if (el.rotation) sr.rotation = el.rotation * Math.PI / 180;
+                    th.addControl(sr);
+                }
             }
             if (el.type === "image" && el.dataUrl) {
                 var ic = new BABYLON.GUI.Rectangle();
@@ -177,20 +272,9 @@ export function buildThumbnails(app) {
                 th.addControl(ic);
             }
             if (el.type === "text" && el.text.trim()) {
-                var fs = Math.max(3, Math.round(el.fontSize * TW / CANVAS_W));
-                var mi = new BABYLON.GUI.TextBlock();
-                mi.text = el.text; mi.fontSize = fs;
-                mi.fontWeight = el.fontWeight || "normal";
-                mi.color = el.color; mi.fontFamily = "Segoe UI,sans-serif";
-                mi.left = (el.x * TW) + "px"; mi.top = (el.y * TH) + "px";
-                if (el.w) mi.width = (el.w * TW) + "px";
-                mi.textHorizontalAlignment = el.align === "center" ? BABYLON.GUI.Control.HORIZONTAL_ALIGNMENT_CENTER :
-                    el.align === "right" ? BABYLON.GUI.Control.HORIZONTAL_ALIGNMENT_RIGHT :
-                    BABYLON.GUI.Control.HORIZONTAL_ALIGNMENT_LEFT;
-                mi.horizontalAlignment = BABYLON.GUI.Control.HORIZONTAL_ALIGNMENT_LEFT;
-                mi.verticalAlignment = BABYLON.GUI.Control.VERTICAL_ALIGNMENT_TOP;
-                mi.textWrapping = true;
-                th.addControl(mi);
+                // Use the same text layout path as main slide to avoid thumbnail-only drift.
+                var thumbFontScale = FONT_SCALE * (TW / CANVAS_W);
+                renderTextElement(el, th, TW, TH, thumbFontScale);
             }
         });
 

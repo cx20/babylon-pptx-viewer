@@ -99,7 +99,9 @@ function parseSp(sp, elements, slideW, slideH, skipPH, defTextColor, fx, fy, fw,
     var rotDeg = rot / 60000;
 
     // Shape visual properties
-    var spPr = sp.getElementsByTagNameNS(A_NS, "spPr")[0];
+    // p:spPr is in presentation namespace in normal PPTX shape nodes.
+    var spPr = sp.getElementsByTagNameNS(P_NS, "spPr")[0];
+    if (!spPr) spPr = sp.getElementsByTagNameNS(A_NS, "spPr")[0];
     var geom = getPresetGeometry(spPr);
     var outline = parseOutline(spPr);
     var fill = getShapeFill(spPr);
@@ -137,7 +139,11 @@ function parseSp(sp, elements, slideW, slideH, skipPH, defTextColor, fx, fy, fw,
         if (hasBgImage && themeColors.accent1) phFC = themeColors.accent1;
     }
     else if (phType === "body" || phType === "obj") phFS = 18;
-    else if (!phType && cy > 0) phFS = Math.min(Math.max(Math.round(fracH * CANVAS_H * 0.4), 10), 36);
+    else if (!phType && cy > 0) {
+        // Non-placeholder text boxes in PPT usually default to ~18pt.
+        // Height-based estimation made bullet text too large in fixtures.
+        phFS = 18;
+    }
     // Apply layout fontRef color as default, then slide's own style overrides
     if (phLayout && phLayout.fontRefColor) phFC = phLayout.fontRefColor;
     if (styleFontColor) phFC = styleFontColor;
@@ -195,11 +201,17 @@ function parseSp(sp, elements, slideW, slideH, skipPH, defTextColor, fx, fy, fw,
     else if (anchor === "b") startY = areaTop + areaH - thFrac;
 
     var curY = startY;
+    // Approximate PPT default list indent (0.375 inch per level).
+    var indentPerLevel = 342900 / slideW;
     paras.forEach(function (p, pi) {
         if (!p.isEmpty) {
+            var level = p.level || 0;
+            var indentX = level * indentPerLevel;
+            var textX = fracX + iL + indentX;
+            var textW = Math.max(0.01, fracW - iL - iR - indentX);
             elements.push(normalizeElement({
                 type: "text", text: p.text,
-                x: fracX + iL, y: curY, w: fracW - iL - iR,
+                x: textX, y: curY, w: textW,
                 fontSize: p.fontSize, color: p.color,
                 fontWeight: p.fontWeight, fontStyle: p.italic ? "italic" : "normal",
                 align: p.align, rotation: rotDeg
@@ -257,7 +269,9 @@ function parseCxnSp(cxn, elements, slideW, slideH, fx, fy) {
     var x1 = parseInt(off.getAttribute("x")) || 0, y1 = parseInt(off.getAttribute("y")) || 0;
     var w = parseInt(ext.getAttribute("cx")) || 0, h = parseInt(ext.getAttribute("cy")) || 0;
     var flipH = xfrm.getAttribute("flipH") === "1", flipV = xfrm.getAttribute("flipV") === "1";
-    var spPr = cxn.getElementsByTagNameNS(A_NS, "spPr")[0];
+    // p:spPr is typically used for connector style/outline.
+    var spPr = cxn.getElementsByTagNameNS(P_NS, "spPr")[0];
+    if (!spPr) spPr = cxn.getElementsByTagNameNS(A_NS, "spPr")[0];
     var ol = parseOutline(spPr);
     console.log("[CXN] connector line color=" + (ol?ol.color:"#000") + " flipH=" + flipH + " flipV=" + flipV);
     elements.push(normalizeElement({

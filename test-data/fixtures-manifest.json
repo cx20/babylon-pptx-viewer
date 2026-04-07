@@ -1,0 +1,54 @@
+{
+  "version": 1,
+  "generator": "tools/generate_test_pptx.py",
+  "fixtures": [
+    {
+      "file": "fixture-01-basic-text-shapes.pptx",
+      "purpose": "text + shapes + line + notes",
+      "expected": {
+        "slides": 1,
+        "text_min": 2,
+        "shapes_min": 3,
+        "images": 0,
+        "tables": 0,
+        "notes_non_empty": true
+      }
+    },
+    {
+      "file": "fixture-02-image-table.pptx",
+      "purpose": "image + table + notes",
+      "expected": {
+        "slides": 1,
+        "text_min": 1,
+        "shapes_min": 0,
+        "images": 1,
+        "tables": 1,
+        "notes_non_empty": true
+      }
+    },
+    {
+      "file": "fixture-03-multi-slide-notes.pptx",
+      "purpose": "multi-slide + background + notes",
+      "expected": {
+        "slides": 3,
+        "text_min": 3,
+        "shapes_min": 0,
+        "images": 0,
+        "tables": 0,
+        "notes_non_empty": true
+      }
+    },
+    {
+      "file": "fixture-04-bullets-rotation.pptx",
+      "purpose": "bullets + rotation + notes",
+      "expected": {
+        "slides": 1,
+        "text_min": 2,
+        "shapes_min": 1,
+        "images": 0,
+        "tables": 0,
+        "notes_non_empty": true
+      }
+    }
+  ]
+}
