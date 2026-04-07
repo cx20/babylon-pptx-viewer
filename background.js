@@ -4,7 +4,98 @@
 
 import { A_NS, P_NS, R_NS } from "./constants.js";
 import { resolveColor, themeColors, hexToRgb, applyColorModifiers } from "./color-utils.js";
-import { loadImageAsDataUrl } from "./zip-helpers.js";
+import { loadImageAsDataUrl, parseRelsFile } from "./zip-helpers.js";
+
+function resolveClrNodeWithPh(clrNode, phClr) {
+    if (!clrNode) return null;
+    if (clrNode.localName === "srgbClr") {
+        return applyColorModifiers("#" + (clrNode.getAttribute("val") || "000000"), clrNode);
+    }
+    if (clrNode.localName === "schemeClr") {
+        var key = clrNode.getAttribute("val") || "";
+        var base = key === "phClr" ? (phClr || themeColors.bg1 || "#FFFFFF") : (themeColors[key] || "#333333");
+        return applyColorModifiers(base, clrNode);
+    }
+    if (clrNode.localName === "prstClr") {
+        var pv = (clrNode.getAttribute("val") || "").toLowerCase();
+        var base2 = pv === "white" ? "#FFFFFF" : pv === "black" ? "#000000" : "#808080";
+        return applyColorModifiers(base2, clrNode);
+    }
+    return null;
+}
+
+function resolveFillNodeColor(fillNode, phClr) {
+    if (!fillNode) return null;
+    if (fillNode.localName === "solidFill") {
+        for (var i = 0; i < fillNode.childNodes.length; i++) {
+            var cn = fillNode.childNodes[i];
+            if (cn.nodeType !== 1) continue;
+            var c = resolveClrNodeWithPh(cn, phClr);
+            if (c) return c;
+        }
+    }
+    if (fillNode.localName === "gradFill") {
+        var gs = fillNode.getElementsByTagNameNS(A_NS, "gs");
+        if (gs.length > 0) {
+            for (var gi = 0; gi < gs[0].childNodes.length; gi++) {
+                var gcn = gs[0].childNodes[gi];
+                if (gcn.nodeType !== 1) continue;
+                var gc = resolveClrNodeWithPh(gcn, phClr);
+                if (gc) return gc;
+            }
+        }
+    }
+    return null;
+}
+
+async function resolveBgRefFromTheme(zip, bgRef) {
+    var idx = parseInt(bgRef.getAttribute("idx") || "1001", 10);
+    var phClr = resolveColor(bgRef) || themeColors.bg1 || "#FFFFFF";
+    var themeFile = zip.file("ppt/theme/theme1.xml");
+    if (!themeFile) return null;
+
+    var tdoc = new DOMParser().parseFromString(await themeFile.async("string"), "application/xml");
+    var fmtScheme = tdoc.getElementsByTagNameNS(A_NS, "fmtScheme")[0];
+    if (!fmtScheme) return null;
+    var bgFillStyleLst = fmtScheme.getElementsByTagNameNS(A_NS, "bgFillStyleLst")[0];
+    if (!bgFillStyleLst) return null;
+
+    var styles = [];
+    for (var i = 0; i < bgFillStyleLst.childNodes.length; i++) {
+        var n = bgFillStyleLst.childNodes[i];
+        if (n.nodeType === 1) styles.push(n);
+    }
+    if (styles.length === 0) return null;
+
+    // OOXML style matrix mapping: background refs commonly start at 1000.
+    // 1000 -> first bg style, 1001 -> second, 1002 -> third.
+    var styleIdx = idx >= 1000 ? (idx - 1000) : (idx - 1);
+    if (styleIdx < 0) styleIdx = 0;
+    if (styleIdx >= styles.length) styleIdx = styles.length - 1;
+    var styleNode = styles[styleIdx];
+    if (!styleNode) return null;
+
+    // Background image style
+    if (styleNode.localName === "blipFill") {
+        var blip = styleNode.getElementsByTagNameNS(A_NS, "blip")[0];
+        if (blip) {
+            var rId = blip.getAttribute("r:embed") || blip.getAttributeNS(R_NS, "embed");
+            if (rId) {
+                var themeRels = await parseRelsFile(zip, "ppt/theme/_rels/theme1.xml.rels");
+                var target = themeRels.all[rId];
+                if (target) {
+                    var img = await loadImageAsDataUrl(zip, "ppt/theme/", target);
+                    if (img) return img;
+                }
+            }
+        }
+    }
+
+    // Solid/gradient style fallback
+    var styleColor = resolveFillNodeColor(styleNode, phClr);
+    if (styleColor) return { solidColor: styleColor };
+    return null;
+}
 
 // Extract background from a slide/layout/master XML
 // Returns: dataUrl string (bg image), {solidColor:"#..."}, or null
@@ -50,7 +141,15 @@ export async function extractBackground(xmlStr, zip, basePath, relsAll, slideW, 
         var bgRef = bg.getElementsByTagNameNS(P_NS, "bgRef")[0];
         if (!bgRef) bgRef = bg.getElementsByTagNameNS(A_NS, "bgRef")[0];
         console.log("[BG]   hasBgRef=" + !!bgRef);
-        if (bgRef) { var c = resolveColor(bgRef); if (c) return { solidColor: c }; }
+        if (bgRef) {
+            var fromTheme = await resolveBgRefFromTheme(zip, bgRef);
+            if (fromTheme) {
+                console.log("[BG]   bgRef resolved via theme style: " + (typeof fromTheme === "string" ? "image" : JSON.stringify(fromTheme)));
+                return fromTheme;
+            }
+            var c = resolveColor(bgRef);
+            if (c) return { solidColor: c };
+        }
     }
 
     // Check spTree for full-bleed background images
