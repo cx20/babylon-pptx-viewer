@@ -52,13 +52,13 @@ async function ensureJsZipLoaded() {
             resolve(); return;
         }
         var s = document.createElement("script");
-        s.src = "https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js";
+        s.src = "./libs/jszip.min.js";
         s.onload = resolve;
         s.onerror = function() {
             reject(new AppError(
                 'JSZIP_LOAD_FAIL',
-                'Failed to load file library. Check your internet connection.',
-                'JSZip CDN load failed'
+                'Failed to load file library. Check that libs/jszip.min.js exists.',
+                'JSZip local file (libs/jszip.min.js) load failed'
             ));
         };
         document.head.appendChild(s);
