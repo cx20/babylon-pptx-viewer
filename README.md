@@ -168,9 +168,9 @@ Benefits of normalization:
 | p:cxnSp (connector) | Yes | flipH/flipV supported |
 | p:grpSp (group) | Yes | recursive nested groups supported |
 | p:graphicFrame (table) | Partial | basic table rendering |
-| p:graphicFrame (chart) | Partial | placeholder rendering |
-| p:graphicFrame (diagram) | Partial | placeholder rendering |
-| SmartArt | No | not supported yet |
+| p:graphicFrame (chart) | Partial | bar chart rendering (other chart types fallback) |
+| p:graphicFrame (diagram) | Partial | SmartArt drawing-based rendering for selected layouts |
+| SmartArt | Partial | pie/cycle and icon vertical list are partially supported |
 | Animation | No | not supported yet |
 
 ### Text
@@ -179,7 +179,7 @@ Benefits of normalization:
 |---|---|---|
 | Font size | Yes | rendered with 0.75 scale |
 | Bold/italic | Yes |  |
-| Color (solidFill, schemeClr) | Yes | shade/tint/lumMod modifiers supported |
+| Color (solidFill, schemeClr, scrgbClr) | Yes | shade/tint/lumMod modifiers supported |
 | Alignment | Yes | left/center/right |
 | Bullets (buChar) | Yes |  |
 | Capitalization (cap="all") | Yes | layout inheritance supported |
@@ -252,11 +252,12 @@ Use console log prefixes to locate issues quickly:
 ## Known Limitations
 
 1. Background art effects: full parity with PowerPoint pixel processing is difficult in WebGL. The current implementation approximates with a dk2 color overlay.
-2. Charts: OOXML chart rendering is not implemented yet; placeholder boxes are shown.
-3. SmartArt: dsp:drawing diagram parsing is not implemented yet.
-4. Animation: slide animations and transitions are not implemented.
-5. Font size: Babylon.js GUI constraints require 75% font scaling.
-6. Embedded fonts: custom embedded fonts are not supported; fallbacks such as Segoe UI/Calibri are used.
+2. Charts: only bar chart is rendered; many chart types still fall back to placeholders.
+3. SmartArt: only selected layouts are supported (not full layout engine parity).
+4. SmartArt icons: some SVG/icon assets can differ from PowerPoint output depending on source part format.
+5. Animation: slide animations and transitions are not implemented.
+6. Font size: Babylon.js GUI constraints require 75% font scaling.
+7. Embedded fonts: custom embedded fonts are not supported; fallbacks such as Segoe UI/Calibri are used.
 
 ## Troubleshooting
 
