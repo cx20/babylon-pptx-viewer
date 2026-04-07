@@ -49,6 +49,18 @@
         "tables": 0,
         "notes_non_empty": true
       }
+    },
+    {
+      "file": "fixture-05-group-transform.pptx",
+      "purpose": "group + nested-group transform + notes",
+      "expected": {
+        "slides": 1,
+        "text_min": 3,
+        "shapes_min": 5,
+        "images": 0,
+        "tables": 0,
+        "notes_non_empty": true
+      }
     }
   ]
 }

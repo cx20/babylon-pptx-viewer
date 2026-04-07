@@ -127,7 +127,7 @@ export function renderSlide(app) {
                 var len = Math.sqrt(dx * dx + dy * dy), ang = Math.atan2(dy, dx);
                 var le = new BABYLON.GUI.Rectangle();
                 le.width = len + "px"; le.height = (el.thickness || 2) + "px";
-                le.background = el.strokeColor || el.color || "#000"; le.thickness = 0;
+                le.background = el.color || el.strokeColor || "#000"; le.thickness = 0;
                 le.left = ((x1 + x2) / 2 - CANVAS_W / 2) + "px";
                 le.top = ((y1 + y2) / 2 - CANVAS_H / 2) + "px";
                 le.rotation = ang; sLayer.addControl(le);

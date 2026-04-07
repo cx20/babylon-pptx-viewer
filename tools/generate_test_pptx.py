@@ -220,6 +220,77 @@ def make_fixture_04_bullets_rotation() -> str:
     return out_name
 
 
+def make_fixture_05_group_transform() -> str:
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    set_slide_background(slide, (255, 255, 255))
+
+    title = slide.shapes.add_textbox(Inches(0.7), Inches(0.4), Inches(8.7), Inches(0.7))
+    tp = title.text_frame.paragraphs[0]
+    tp.text = "Fixture 05: Group Transform"
+    tp.runs[0].font.size = Pt(24)
+    tp.runs[0].font.bold = True
+    tp.runs[0].font.color.rgb = RGBColor(66, 66, 66)
+
+    group = slide.shapes.add_group_shape()
+
+    # Child shapes are defined in group-local coordinates.
+    r = group.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(0.2), Inches(0.2), Inches(1.8), Inches(1.0))
+    r.fill.solid()
+    r.fill.fore_color.rgb = RGBColor(106, 168, 79)
+    r.line.color.rgb = RGBColor(56, 118, 29)
+    r.line.width = Pt(1.5)
+
+    e = group.shapes.add_shape(MSO_SHAPE.OVAL, Inches(2.3), Inches(0.25), Inches(1.2), Inches(0.9))
+    e.fill.solid()
+    e.fill.fore_color.rgb = RGBColor(61, 133, 198)
+    e.line.color.rgb = RGBColor(31, 78, 121)
+    e.line.width = Pt(1.5)
+
+    c = group.shapes.add_connector(MSO_CONNECTOR.STRAIGHT, Inches(0.4), Inches(1.5), Inches(3.3), Inches(1.85))
+    c.line.color.rgb = RGBColor(204, 102, 0)
+    c.line.width = Pt(2)
+
+    # Nested group for recursive grpSp transform checks.
+    nested = group.shapes.add_group_shape()
+    n1 = nested.shapes.add_shape(MSO_SHAPE.CHEVRON, Inches(0.0), Inches(0.0), Inches(1.0), Inches(0.6))
+    n1.fill.solid()
+    n1.fill.fore_color.rgb = RGBColor(255, 192, 0)
+    n1.line.color.rgb = RGBColor(153, 115, 0)
+    n1.rotation = 15
+    n2 = nested.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(1.05), Inches(0.05), Inches(0.55), Inches(0.45))
+    n2.fill.solid()
+    n2.fill.fore_color.rgb = RGBColor(142, 124, 195)
+    n2.line.color.rgb = RGBColor(103, 78, 167)
+
+    # Position and scale nested group in parent group local space.
+    nested.left = Inches(1.35)
+    nested.top = Inches(1.95)
+    nested.width = Inches(2.1)
+    nested.height = Inches(0.9)
+
+    # Position and scale outer group on slide.
+    group.left = Inches(1.2)
+    group.top = Inches(1.5)
+    group.width = Inches(5.6)
+    group.height = Inches(2.8)
+
+    info = slide.shapes.add_textbox(Inches(6.9), Inches(2.1), Inches(2.4), Inches(1.4))
+    itf = info.text_frame
+    itf.text = "grpSp"
+    itf.paragraphs[0].runs[0].font.bold = True
+    p = itf.add_paragraph()
+    p.text = "outer + nested"
+    p2 = itf.add_paragraph()
+    p2.text = "scale + offset"
+
+    add_notes(slide, "Fixture 05 note text")
+
+    out_name = "fixture-05-group-transform.pptx"
+    prs.save(OUT_DIR / out_name)
+    return out_name
+
+
 def build_manifest(files: list[str]) -> None:
     manifest = {
         "version": 1,
@@ -273,6 +344,18 @@ def build_manifest(files: list[str]) -> None:
                     "notes_non_empty": True,
                 },
             },
+            {
+                "file": files[4],
+                "purpose": "group + nested-group transform + notes",
+                "expected": {
+                    "slides": 1,
+                    "text_min": 3,
+                    "shapes_min": 5,
+                    "images": 0,
+                    "tables": 0,
+                    "notes_non_empty": True,
+                },
+            },
         ],
     }
     MANIFEST_PATH.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
@@ -286,8 +369,9 @@ def main() -> None:
     f2 = make_fixture_02_image_table(image_path)
     f3 = make_fixture_03_multislide_notes()
     f4 = make_fixture_04_bullets_rotation()
+    f5 = make_fixture_05_group_transform()
 
-    build_manifest([f1, f2, f3, f4])
+    build_manifest([f1, f2, f3, f4, f5])
 
     print("Generated fixtures:")
     for p in sorted(OUT_DIR.glob("*.pptx")):

@@ -17,10 +17,14 @@ function parseShapeTree(spTreeNode, slideW, slideH, images, relsAll, opts) {
     var gOffX = opts.gOffX || 0, gOffY = opts.gOffY || 0;
     var gScaleX = opts.gScaleX || 1, gScaleY = opts.gScaleY || 1;
 
-    function toFracX(emu) { return (gOffX + emu * gScaleX) / slideW; }
-    function toFracY(emu) { return (gOffY + emu * gScaleY) / slideH; }
-    function toFracW(emu) { return emu * gScaleX / slideW; }
-    function toFracH(emu) { return emu * gScaleY / slideH; }
+    function finiteOr(value, fallback) {
+        return Number.isFinite(value) ? value : fallback;
+    }
+
+    function toFracX(emu) { return finiteOr((gOffX + emu * gScaleX) / slideW, 0); }
+    function toFracY(emu) { return finiteOr((gOffY + emu * gScaleY) / slideH, 0); }
+    function toFracW(emu) { return finiteOr(emu * gScaleX / slideW, 0); }
+    function toFracH(emu) { return finiteOr(emu * gScaleY / slideH, 0); }
 
     // Iterate direct children
     var childCount = {sp:0, pic:0, grpSp:0, cxnSp:0, graphicFrame:0, other:0};
@@ -312,10 +316,18 @@ function parseGrpSp(grpSp, elements, slideW, slideH, images, relsAll, parentOpts
     var pGScaleX = (parentOpts && parentOpts.gScaleX) || 1;
     var pGScaleY = (parentOpts && parentOpts.gScaleY) || 1;
 
-    var newGOffX = pGOffX + (offX - chOffX * (extW / chExtW)) * pGScaleX;
-    var newGOffY = pGOffY + (offY - chOffY * (extH / chExtH)) * pGScaleY;
-    var newGScaleX = pGScaleX * (extW / chExtW);
-    var newGScaleY = pGScaleY * (extH / chExtH);
+    var ratioX = chExtW !== 0 ? (extW / chExtW) : 1;
+    var ratioY = chExtH !== 0 ? (extH / chExtH) : 1;
+    if (chExtW === 0 || chExtH === 0) {
+        console.warn("[GRPSP] invalid chExt detected, fallback ratio=1", { chExtW: chExtW, chExtH: chExtH });
+    }
+    if (!Number.isFinite(ratioX)) ratioX = 1;
+    if (!Number.isFinite(ratioY)) ratioY = 1;
+
+    var newGOffX = pGOffX + (offX - chOffX * ratioX) * pGScaleX;
+    var newGOffY = pGOffY + (offY - chOffY * ratioY) * pGScaleY;
+    var newGScaleX = pGScaleX * ratioX;
+    var newGScaleY = pGScaleY * ratioY;
 
     var childOpts = {
         skipPlaceholders: parentOpts ? parentOpts.skipPlaceholders : false,
