@@ -96,6 +96,66 @@ var app = {
 
 座標系: `x`, `y`, `w`, `h` はすべて0.0〜1.0の小数（スライドサイズに対する割合）。
 
+### 要素スキーマ (Issue 04)
+
+すべての要素は `normalizeElement()` で正規化され、以下のスキーマに準拠します：
+
+#### 共通プロパティ（すべての要素）
+
+| プロパティ | 型 | デフォルト | 説明 |
+|-----------|-----|----------|------|
+| `type` | string | "shape" | "text" \| "shape" \| "image" \| "table" |
+| `x` | number | 0 | 左端座標（0.0-1.0） |
+| `y` | number | 0 | 上端座標（0.0-1.0） |
+| `rotation` | number | 0 | 回転角度（度） |
+
+#### テキスト要素 (`type: "text"`)
+
+| プロパティ | 型 | デフォルト | 説明 |
+|-----------|-----|----------|------|
+| `text` | string | "" | テキスト内容 |
+| `w` | number | 1 | 幅（0.0-1.0） |
+| `fontSize` | number | 12 | ポイント |
+| `color` | string | "#000000" | 16進カラーコード |
+| `fontWeight` | string | "normal" | "normal" \| "bold" |
+| `fontStyle` | string | "normal" | "normal" \| "italic" |
+| `fontFamily` | string | "Calibri" | フォント名 |
+| `align` | string | "left" | "left" \| "center" \| "right" |
+
+#### 図形要素 (`type: "shape"`)
+
+| プロパティ | 型 | デフォルト | 説明 |
+|-----------|-----|----------|------|
+| `shape` | string | "rect" | "rect" \| "ellipse" \| "line" \| "circle" 等 |
+| `w` | number | 1 | 幅（0.0-1.0） |
+| `h` | number | 1 | 高さ（0.0-1.0） |
+| `fillColor` | string | "#FFFFFF" | 塗りつぶし色 |
+| `strokeColor` | string | "#000000" | 枠線色 |
+| `thickness` | number | 1 | 線の太さ（ピクセル） |
+| `x1`, `y1`, `x2`, `y2` | number | — | 線用：始点・終点座標（line shapeのみ） |
+
+#### 画像要素 (`type: "image"`)
+
+| プロパティ | 型 | デフォルト | 説明 |
+|-----------|-----|----------|------|
+| `dataUrl` | string | null | 画像dataURL |
+| `w` | number | 1 | 幅（0.0-1.0） |
+| `h` | number | 1 | 高さ（0.0-1.0） |
+| `crop` | object | — | `{l, t, r, b}` クロップ値（0.0-1.0） |
+
+#### テーブル要素 (`type: "table"`)
+
+| プロパティ | 型 | デフォルト | 説明 |
+|-----------|-----|----------|------|
+| `rows` | number | 0 | 行数 |
+| `cols` | number | 0 | 列数 |
+| `tableData` | array | [] | セルデータ配列 |
+
+**正規化の利点**:
+- すべての要素が保証されたプロパティセットを持つため、レンダリング時に undefined チェックが不要
+- パーサーはこの関数を使用して一貫性を確保
+- 新しい要素タイプやプロパティの追加時も DEFAULT_ELEMENT_SCHEMA を更新するだけで完結
+
 ## 対応状況
 
 ### OOXML要素

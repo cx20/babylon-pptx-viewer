@@ -2,7 +2,7 @@
 // shape-parsers.js - Shape tree parsing (sp, pic, cxnSp, grpSp, graphicFrame)
 // ============================================================================
 
-import { A_NS, P_NS, R_NS, CANVAS_H } from "./constants.js";
+import { A_NS, P_NS, R_NS, CANVAS_H, normalizeElement } from "./constants.js";
 import { resolveColor, themeColors } from "./color-utils.js";
 import { parseParagraphs, parseOutline, getPresetGeometry, getShapeFill } from "./text-parser.js";
 
@@ -118,13 +118,13 @@ function parseSp(sp, elements, slideW, slideH, skipPH, defTextColor, fx, fy, fw,
 
     // Emit shape rectangle/ellipse
     if ((fill || outline) && cx > 0 && cy > 0) {
-        elements.push({
+        elements.push(normalizeElement({
             type: "shape", shape: geom, x: fracX, y: fracY, w: fracW, h: fracH,
             fillColor: fill || "transparent",
-            borderColor: outline ? outline.color : "transparent",
-            borderWidth: outline ? outline.width : 0,
+            strokeColor: outline ? outline.color : "transparent",
+            thickness: outline ? outline.width : 0,
             rotation: rotDeg
-        });
+        }));
     }
 
     // Placeholder font defaults
@@ -197,13 +197,13 @@ function parseSp(sp, elements, slideW, slideH, skipPH, defTextColor, fx, fy, fw,
     var curY = startY;
     paras.forEach(function (p, pi) {
         if (!p.isEmpty) {
-            elements.push({
+            elements.push(normalizeElement({
                 type: "text", text: p.text,
                 x: fracX + iL, y: curY, w: fracW - iL - iR,
                 fontSize: p.fontSize, color: p.color,
                 fontWeight: p.fontWeight, fontStyle: p.italic ? "italic" : "normal",
                 align: p.align, rotation: rotDeg
-            });
+            }));
         }
         curY += paraH[pi] / CANVAS_H;
     });
@@ -240,11 +240,11 @@ function parsePic(pic, elements, slideW, slideH, images, relsAll, hasBgImage, fx
         }
     }
 
-    elements.push({
+    elements.push(normalizeElement({
         type: "image", dataUrl: images[rId],
         x: fracX, y: fracY, w: fracW, h: fracH,
         crop: { l: cropL, t: cropT, r: cropR, b: cropB }
-    });
+    }));
     console.log("[PIC] image at (" + fracX.toFixed(3) + "," + fracY.toFixed(3) + ") size=(" + fracW.toFixed(3) + "," + fracH.toFixed(3) + ") crop=L" + (cropL*100).toFixed(0) + "%,T" + (cropT*100).toFixed(0) + "%,R" + (cropR*100).toFixed(0) + "%,B" + (cropB*100).toFixed(0) + "%");
 }
 
@@ -260,12 +260,12 @@ function parseCxnSp(cxn, elements, slideW, slideH, fx, fy) {
     var spPr = cxn.getElementsByTagNameNS(A_NS, "spPr")[0];
     var ol = parseOutline(spPr);
     console.log("[CXN] connector line color=" + (ol?ol.color:"#000") + " flipH=" + flipH + " flipV=" + flipV);
-    elements.push({
+    elements.push(normalizeElement({
         type: "shape", shape: "line",
         x1: fx(flipH ? x1 + w : x1), y1: fy(flipV ? y1 + h : y1),
         x2: fx(flipH ? x1 : x1 + w), y2: fy(flipV ? y1 : y1 + h),
         color: ol ? ol.color : "#000", thickness: ol ? ol.width : 1
-    });
+    }));
 }
 
 // --- Parse grpSp (group shape) - RECURSIVE ---
@@ -369,15 +369,15 @@ function parseGraphicFrame(gf, elements, slideW, slideH, images, relsAll, defTex
     else if (uri.indexOf("ole") !== -1) label = "📎 OLE Object";
     else label = "📋 Object";
 
-    elements.push({
+    elements.push(normalizeElement({
         type: "shape", shape: "rect", x: fracX, y: fracY, w: fracW, h: fracH,
-        fillColor: "rgba(200,200,200,0.3)", borderColor: "#999", borderWidth: 1, rotation: 0
-    });
-    elements.push({
+        fillColor: "rgba(200,200,200,0.3)", strokeColor: "#999", thickness: 1, rotation: 0
+    }));
+    elements.push(normalizeElement({
         type: "text", text: label,
         x: fracX, y: fracY + fracH * 0.35, w: fracW,
         fontSize: 12, color: "#666", fontWeight: "normal", fontStyle: "normal", align: "center"
-    });
+    }));
 }
 
 // --- Parse a:tbl (table) from graphicData ---
@@ -429,10 +429,10 @@ function parseTable(graphicData, elements, fracX, fracY, fracW, fracH, defTextCo
             }
 
             // Cell border
-            elements.push({
+            elements.push(normalizeElement({
                 type: "shape", shape: "rect", x: curX, y: curY, w: cw, h: rh,
-                fillColor: cellFill || "transparent", borderColor: "#AAA", borderWidth: 1, rotation: 0
-            });
+                fillColor: cellFill || "transparent", strokeColor: "#AAA", thickness: 1, rotation: 0
+            }));
 
             // Cell text
             var txBody = cells[c].getElementsByTagNameNS(A_NS, "txBody")[0];
@@ -441,11 +441,11 @@ function parseTable(graphicData, elements, fracX, fracY, fracW, fracH, defTextCo
                 var textY = curY + 0.005;
                 cellParas.forEach(function (p) {
                     if (!p.isEmpty) {
-                        elements.push({
+                        elements.push(normalizeElement({
                             type: "text", text: p.text, x: curX + 0.005, y: textY, w: cw - 0.01,
                             fontSize: Math.min(p.fontSize, 14), color: p.color,
                             fontWeight: p.fontWeight, fontStyle: p.italic ? "italic" : "normal", align: p.align
-                        });
+                        }));
                     }
                     textY += p.fontSize * 1.2 / CANVAS_H;
                 });
