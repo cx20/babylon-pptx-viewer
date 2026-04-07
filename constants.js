@@ -66,6 +66,16 @@ var DEFAULT_ELEMENT_SCHEMA = {
     rows: 0, cols: 0, tableData: []
 };
 
+function toFiniteNumber(value, fallback) {
+    var n = Number(value);
+    return Number.isFinite(n) ? n : fallback;
+}
+
+function toFinitePositiveNumber(value, fallback) {
+    var n = Number(value);
+    return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
 export function normalizeElement(el) {
     if (!el || typeof el !== "object") return null;
 
@@ -83,6 +93,9 @@ export function normalizeElement(el) {
     if (normalized.x === undefined || normalized.x === null) normalized.x = DEFAULT_ELEMENT_SCHEMA.x;
     if (normalized.y === undefined || normalized.y === null) normalized.y = DEFAULT_ELEMENT_SCHEMA.y;
     if (normalized.rotation === undefined) normalized.rotation = DEFAULT_ELEMENT_SCHEMA.rotation;
+    normalized.x = toFiniteNumber(normalized.x, DEFAULT_ELEMENT_SCHEMA.x);
+    normalized.y = toFiniteNumber(normalized.y, DEFAULT_ELEMENT_SCHEMA.y);
+    normalized.rotation = toFiniteNumber(normalized.rotation, DEFAULT_ELEMENT_SCHEMA.rotation);
 
     // Type-specific defaults
     if (normalized.type === "text") {
@@ -93,6 +106,8 @@ export function normalizeElement(el) {
         if (!normalized.fontStyle) normalized.fontStyle = DEFAULT_ELEMENT_SCHEMA.fontStyle;
         if (!normalized.align) normalized.align = DEFAULT_ELEMENT_SCHEMA.align;
         if (normalized.w === undefined || normalized.w === null) normalized.w = DEFAULT_ELEMENT_SCHEMA.w;
+        normalized.fontSize = toFinitePositiveNumber(normalized.fontSize, DEFAULT_ELEMENT_SCHEMA.fontSize);
+        normalized.w = toFinitePositiveNumber(normalized.w, DEFAULT_ELEMENT_SCHEMA.w);
     }
     else if (normalized.type === "shape") {
         if (!normalized.shape) normalized.shape = DEFAULT_ELEMENT_SCHEMA.shape;
@@ -101,6 +116,9 @@ export function normalizeElement(el) {
         if (!normalized.fillColor) normalized.fillColor = DEFAULT_ELEMENT_SCHEMA.fillColor;
         if (!normalized.strokeColor) normalized.strokeColor = DEFAULT_ELEMENT_SCHEMA.strokeColor;
         if (normalized.thickness === undefined) normalized.thickness = DEFAULT_ELEMENT_SCHEMA.thickness;
+        normalized.w = toFinitePositiveNumber(normalized.w, DEFAULT_ELEMENT_SCHEMA.w);
+        normalized.h = toFinitePositiveNumber(normalized.h, DEFAULT_ELEMENT_SCHEMA.h);
+        normalized.thickness = toFinitePositiveNumber(normalized.thickness, DEFAULT_ELEMENT_SCHEMA.thickness);
         
         // Line-specific
         if (normalized.shape === "line") {
@@ -108,16 +126,24 @@ export function normalizeElement(el) {
             if (normalized.y1 === undefined) normalized.y1 = DEFAULT_ELEMENT_SCHEMA.y1;
             if (normalized.x2 === undefined) normalized.x2 = DEFAULT_ELEMENT_SCHEMA.x2;
             if (normalized.y2 === undefined) normalized.y2 = DEFAULT_ELEMENT_SCHEMA.y2;
+            normalized.x1 = toFiniteNumber(normalized.x1, DEFAULT_ELEMENT_SCHEMA.x1);
+            normalized.y1 = toFiniteNumber(normalized.y1, DEFAULT_ELEMENT_SCHEMA.y1);
+            normalized.x2 = toFiniteNumber(normalized.x2, DEFAULT_ELEMENT_SCHEMA.x2);
+            normalized.y2 = toFiniteNumber(normalized.y2, DEFAULT_ELEMENT_SCHEMA.y2);
         }
     }
     else if (normalized.type === "image") {
         if (normalized.w === undefined || normalized.w === null) normalized.w = DEFAULT_ELEMENT_SCHEMA.w;
         if (normalized.h === undefined || normalized.h === null) normalized.h = DEFAULT_ELEMENT_SCHEMA.h;
+        normalized.w = toFinitePositiveNumber(normalized.w, DEFAULT_ELEMENT_SCHEMA.w);
+        normalized.h = toFinitePositiveNumber(normalized.h, DEFAULT_ELEMENT_SCHEMA.h);
     }
     else if (normalized.type === "table") {
         if (normalized.rows === undefined) normalized.rows = DEFAULT_ELEMENT_SCHEMA.rows;
         if (normalized.cols === undefined) normalized.cols = DEFAULT_ELEMENT_SCHEMA.cols;
         if (!normalized.tableData) normalized.tableData = DEFAULT_ELEMENT_SCHEMA.tableData;
+        normalized.rows = Math.max(0, Math.round(toFiniteNumber(normalized.rows, DEFAULT_ELEMENT_SCHEMA.rows)));
+        normalized.cols = Math.max(0, Math.round(toFiniteNumber(normalized.cols, DEFAULT_ELEMENT_SCHEMA.cols)));
     }
 
     return normalized;
