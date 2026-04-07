@@ -12,7 +12,9 @@ function parseShapeTree(spTreeNode, slideW, slideH, images, relsAll, opts) {
     var skipPlaceholders = opts.skipPlaceholders || false;
     var hasBgImage = opts.hasBgImage || false;
     var layoutStyles = opts.layoutStyles || {};
-    var defaultTextColor = hasBgImage ? (themeColors.lt1 || "#FFF") : (themeColors.tx1 || "#333");
+    // Prefer theme text color regardless of background image presence.
+    // Per-template placeholder/style inheritance can still override this later.
+    var defaultTextColor = themeColors.tx1 || "#333";
     // Group transform: convert child coords to slide fraction coords
     var gOffX = opts.gOffX || 0, gOffY = opts.gOffY || 0;
     var gScaleX = opts.gScaleX || 1, gScaleY = opts.gScaleY || 1;
