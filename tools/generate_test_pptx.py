@@ -403,6 +403,154 @@ def make_fixture_06_paragraph_spacing() -> str:
     return out_name
 
 
+def _set_fill_schemeClr(shape, scheme_val: str, modifiers: list | None = None) -> None:
+    """Replace shape fill with a:solidFill > a:schemeClr (with optional modifiers)."""
+    spPr = shape._element.find(qn("p:spPr"))
+    if spPr is None:
+        return
+    solidFill = spPr.find(qn("a:solidFill"))
+    if solidFill is None:
+        solidFill = etree.SubElement(spPr, qn("a:solidFill"))
+    else:
+        for child in list(solidFill):
+            solidFill.remove(child)
+    clr = etree.SubElement(solidFill, qn("a:schemeClr"))
+    clr.set("val", scheme_val)
+    for mod_name, mod_val in (modifiers or []):
+        m = etree.SubElement(clr, qn("a:" + mod_name))
+        m.set("val", str(mod_val))
+
+
+def _set_fill_prstClr(shape, color_name: str) -> None:
+    """Replace shape fill with a:solidFill > a:prstClr."""
+    spPr = shape._element.find(qn("p:spPr"))
+    if spPr is None:
+        return
+    solidFill = spPr.find(qn("a:solidFill"))
+    if solidFill is None:
+        solidFill = etree.SubElement(spPr, qn("a:solidFill"))
+    else:
+        for child in list(solidFill):
+            solidFill.remove(child)
+    prstClr = etree.SubElement(solidFill, qn("a:prstClr"))
+    prstClr.set("val", color_name)
+
+
+def make_fixture_07_theme_colors() -> str:
+    """Fixture 07: schemeClr modifiers (lumMod, lumOff, tint, shade) and prstClr."""
+    prs = Presentation()
+
+    # --- Slide 1: schemeClr + lumMod / lumOff / tint / shade ---
+    s1 = prs.slides.add_slide(prs.slide_layouts[6])
+    set_slide_background(s1, (255, 255, 255))
+
+    tb1 = s1.shapes.add_textbox(Inches(0.5), Inches(0.25), Inches(9.0), Inches(0.55))
+    t1 = tb1.text_frame.paragraphs[0]
+    t1.text = "Fixture 07: Theme Color Modifiers (lumMod, lumOff, tint, shade)"
+    t1.runs[0].font.size = Pt(18)
+    t1.runs[0].font.bold = True
+    t1.runs[0].font.color.rgb = RGBColor(31, 78, 121)
+
+    # Row 1: accent1 base + lumMod 75% + lumMod 50% + lumMod 25% + lumOff 20% + lumOff 40%
+    row1_specs = [
+        ("accent1", None),
+        ("accent1", [("lumMod", 75000)]),
+        ("accent1", [("lumMod", 50000)]),
+        ("accent1", [("lumMod", 25000)]),
+        # Lighter variants: lumMod + lumOff (PowerPoint "Lighter 40%" pattern)
+        ("accent1", [("lumMod", 60000), ("lumOff", 40000)]),
+        ("accent1", [("lumMod", 20000), ("lumOff", 80000)]),
+    ]
+    for col, (scheme, mods) in enumerate(row1_specs):
+        r = s1.shapes.add_shape(
+            MSO_SHAPE.RECTANGLE,
+            Inches(0.5 + col * 1.4), Inches(0.9),
+            Inches(1.2), Inches(0.9),
+        )
+        r.fill.solid()
+        r.fill.fore_color.rgb = RGBColor(68, 114, 196)  # placeholder; replaced below
+        _set_fill_schemeClr(r, scheme, mods)
+        r.line.fill.background()  # no outline
+
+    # Row 2: accent2 + shade variants + tint variants
+    row2_specs = [
+        ("accent2", None),
+        ("accent2", [("shade", 75000)]),
+        ("accent2", [("shade", 50000)]),
+        ("accent2", [("tint", 40000)]),
+        ("accent2", [("tint", 60000)]),
+        ("accent2", [("tint", 80000)]),
+    ]
+    for col, (scheme, mods) in enumerate(row2_specs):
+        r = s1.shapes.add_shape(
+            MSO_SHAPE.RECTANGLE,
+            Inches(0.5 + col * 1.4), Inches(2.0),
+            Inches(1.2), Inches(0.9),
+        )
+        r.fill.solid()
+        r.fill.fore_color.rgb = RGBColor(237, 125, 49)  # placeholder
+        _set_fill_schemeClr(r, scheme, mods)
+        r.line.fill.background()
+
+    # Row 3: satMod + lumMod combined (accent3)
+    row3_specs = [
+        ("accent3", None),
+        ("accent3", [("satMod", 130000)]),
+        ("accent3", [("satMod", 70000)]),
+        ("accent5", None),
+        ("accent5", [("lumMod", 75000)]),
+        ("accent5", [("lumMod", 60000), ("lumOff", 40000)]),
+    ]
+    for col, (scheme, mods) in enumerate(row3_specs):
+        r = s1.shapes.add_shape(
+            MSO_SHAPE.RECTANGLE,
+            Inches(0.5 + col * 1.4), Inches(3.1),
+            Inches(1.2), Inches(0.9),
+        )
+        r.fill.solid()
+        r.fill.fore_color.rgb = RGBColor(165, 165, 165)  # placeholder
+        _set_fill_schemeClr(r, scheme, mods)
+        r.line.fill.background()
+
+    add_notes(s1, "Fixture 07 slide 1: schemeClr with lumMod, lumOff, shade, tint, satMod")
+
+    # --- Slide 2: prstClr preset colors ---
+    s2 = prs.slides.add_slide(prs.slide_layouts[6])
+    set_slide_background(s2, (250, 250, 250))
+
+    tb2 = s2.shapes.add_textbox(Inches(0.5), Inches(0.25), Inches(9.0), Inches(0.55))
+    t2 = tb2.text_frame.paragraphs[0]
+    t2.text = "Fixture 07: Preset Colors (prstClr)"
+    t2.runs[0].font.size = Pt(18)
+    t2.runs[0].font.bold = True
+    t2.runs[0].font.color.rgb = RGBColor(31, 78, 121)
+
+    prstclr_grid = [
+        # (color_name, col, row)
+        ("red",        0, 0), ("green",   1, 0), ("blue",    2, 0),
+        ("orange",     3, 0), ("yellow",  4, 0), ("purple",  5, 0),
+        ("cyan",       0, 1), ("magenta", 1, 1), ("brown",   2, 1),
+        ("gold",       3, 1), ("pink",    4, 1), ("tomato",  5, 1),
+        ("steelBlue",  0, 2), ("coral",   1, 2), ("indigo",  2, 2),
+    ]
+    for color_name, col, row in prstclr_grid:
+        s = s2.shapes.add_shape(
+            MSO_SHAPE.ROUNDED_RECTANGLE,
+            Inches(0.5 + col * 1.55), Inches(0.9 + row * 1.15),
+            Inches(1.35), Inches(0.95),
+        )
+        s.fill.solid()
+        s.fill.fore_color.rgb = RGBColor(200, 200, 200)  # placeholder
+        _set_fill_prstClr(s, color_name)
+        s.line.fill.background()
+
+    add_notes(s2, "Fixture 07 slide 2: prstClr preset colors")
+
+    out_name = "fixture-07-theme-colors.pptx"
+    prs.save(OUT_DIR / out_name)
+    return out_name
+
+
 def build_manifest(files: list[str]) -> None:
     manifest = {
         "version": 1,
@@ -480,6 +628,18 @@ def build_manifest(files: list[str]) -> None:
                     "notes_non_empty": True,
                 },
             },
+            {
+                "file": files[6],
+                "purpose": "schemeClr modifiers (lumMod, lumOff, tint, shade, satMod) + prstClr",
+                "expected": {
+                    "slides": 2,
+                    "text_min": 2,
+                    "shapes_min": 18,
+                    "images": 0,
+                    "tables": 0,
+                    "notes_non_empty": True,
+                },
+            },
         ],
     }
     MANIFEST_PATH.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
@@ -496,7 +656,9 @@ def main() -> None:
     f5 = make_fixture_05_group_transform()
     f6 = make_fixture_06_paragraph_spacing()
 
-    build_manifest([f1, f2, f3, f4, f5, f6])
+    f7 = make_fixture_07_theme_colors()
+
+    build_manifest([f1, f2, f3, f4, f5, f6, f7])
 
     print("Generated fixtures:")
     for p in sorted(OUT_DIR.glob("*.pptx")):

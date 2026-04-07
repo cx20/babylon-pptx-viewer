@@ -73,6 +73,18 @@
         "tables": 0,
         "notes_non_empty": true
       }
+    },
+    {
+      "file": "fixture-07-theme-colors.pptx",
+      "purpose": "schemeClr modifiers (lumMod, lumOff, tint, shade, satMod) + prstClr",
+      "expected": {
+        "slides": 2,
+        "text_min": 2,
+        "shapes_min": 18,
+        "images": 0,
+        "tables": 0,
+        "notes_non_empty": true
+      }
     }
   ]
 }
