@@ -196,6 +196,7 @@ function parseSp(sp, elements, slideW, slideH, skipPH, defTextColor, fx, fy, fw,
     var totalH = 0, paraH = [];
     paras.forEach(function (p) {
         var h = p.isEmpty ? p.fontSize * 0.6 : p.fontSize * p.lineSpacing;
+        h += (p.spaceBefore || 0) + (p.spaceAfter || 0);
         paraH.push(h); totalH += h;
     });
     var areaTop = fracY + iT, areaH = fracH - iT - iB;
