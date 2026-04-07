@@ -273,13 +273,12 @@ Babylon.js Playground v2 は以下の機能をサポートしています：
 
 #### ❌ "Failed to load file library" / JSZip ロード失敗
 
-**原因**: CDNへの通信が遮断されている、またはオフライン環境。
+**原因**: `libs/jszip.min.js` が見つからない、またはファイルが破損している。
 
 **対処**:
-1. ブラウザコンソール（F12）でネットワークエラーを確認
-2. インターネット接続を確認
-3. ファイアウォール設定で `cdnjs.cloudflare.com` へのアクセスを許可
-4. 企業ネットワークの場合、プロキシ設定を確認
+1. `libs/jszip.min.js` が存在するか確認
+2. ブラウザコンソール（F12）で `libs/jszip.min.js` の読み込みエラーを確認
+3. ファイルが破損している場合は [jszip 3.10.1](https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js) を再ダウンロードして `libs/` に配置
 
 #### ❌ "Failed to initialize graphics engine" / グラフィックスエンジン初期化失敗
 
@@ -331,4 +330,4 @@ Babylon.js Playground v2 は以下の機能をサポートしています：
 |------|------|------|------|
 | Windows Safari | グラフィックスが表示されない | WebGL2未対応 | Chrome/Edge を使用 |
 | iPad/iPhone | タッチで図形選択不可 | モバイルタッチイベント未対応 | テスト用にはPCブラウザを使用 |
-| VPN/プロキシ | CDN読み込み失敗 | ホワイトリスト未設定 | IT部門に `cdnjs.cloudflare.com` をホワイトリスト登録依頼 |
+| VPN/プロキシ | Babylon.js CDN読み込み失敗 | ホワイトリスト未設定 | IT部門に `cdn.babylonjs.com` をホワイトリスト登録依頼（JSZipはローカル動作） |
