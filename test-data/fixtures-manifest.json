@@ -61,6 +61,18 @@
         "tables": 0,
         "notes_non_empty": true
       }
+    },
+    {
+      "file": "fixture-06-paragraph-spacing.pptx",
+      "purpose": "paragraph spacing + buAutoNum + buNone + spcPts",
+      "expected": {
+        "slides": 3,
+        "text_min": 9,
+        "shapes_min": 0,
+        "images": 0,
+        "tables": 0,
+        "notes_non_empty": true
+      }
     }
   ]
 }

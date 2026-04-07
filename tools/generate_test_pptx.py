@@ -3,11 +3,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from lxml import etree
 from PIL import Image, ImageDraw
 from pptx import Presentation
 from pptx.dml.color import RGBColor
 from pptx.enum.shapes import MSO_CONNECTOR, MSO_SHAPE
 from pptx.enum.text import PP_ALIGN
+from pptx.oxml.ns import qn
 from pptx.util import Inches, Pt
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -291,6 +293,116 @@ def make_fixture_05_group_transform() -> str:
     return out_name
 
 
+def make_fixture_06_paragraph_spacing() -> str:
+    """Fixture 06: paragraph spacing (spcBef/spcAft/spcPts), buAutoNum, buNone."""
+    prs = Presentation()
+
+    # ---------- Slide 1: spcBef / spcAft spacing ----------
+    s1 = prs.slides.add_slide(prs.slide_layouts[6])
+    set_slide_background(s1, (255, 255, 255))
+
+    tb1 = s1.shapes.add_textbox(Inches(0.7), Inches(0.4), Inches(8.6), Inches(0.65))
+    tp = tb1.text_frame.paragraphs[0]
+    tp.text = "Fixture 06: Paragraph Spacing"
+    tp.runs[0].font.size = Pt(24)
+    tp.runs[0].font.bold = True
+    tp.runs[0].font.color.rgb = RGBColor(31, 78, 121)
+
+    body1 = s1.shapes.add_textbox(Inches(0.9), Inches(1.3), Inches(8.2), Inches(4.5))
+    tf1 = body1.text_frame
+    tf1.word_wrap = True
+
+    tf1.paragraphs[0].text = "No extra spacing (baseline)"
+    tf1.paragraphs[0].runs[0].font.size = Pt(16)
+
+    p2 = tf1.add_paragraph()
+    p2.text = "Space-before 18 pt"
+    p2.runs[0].font.size = Pt(16)
+    p2.space_before = Pt(18)
+
+    p3 = tf1.add_paragraph()
+    p3.text = "Space-after 12 pt"
+    p3.runs[0].font.size = Pt(16)
+    p3.space_after = Pt(12)
+
+    p4 = tf1.add_paragraph()
+    p4.text = "Both: spcBef=10 spcAft=10"
+    p4.runs[0].font.size = Pt(16)
+    p4.space_before = Pt(10)
+    p4.space_after = Pt(10)
+
+    add_notes(s1, "Fixture 06 slide 1: paragraph spacing")
+
+    # ---------- Slide 2: buAutoNum auto-numbered list ----------
+    s2 = prs.slides.add_slide(prs.slide_layouts[6])
+    set_slide_background(s2, (248, 252, 255))
+
+    tb2 = s2.shapes.add_textbox(Inches(0.7), Inches(0.4), Inches(8.6), Inches(0.65))
+    tp2 = tb2.text_frame.paragraphs[0]
+    tp2.text = "Fixture 06: Auto-numbered List"
+    tp2.runs[0].font.size = Pt(24)
+    tp2.runs[0].font.bold = True
+    tp2.runs[0].font.color.rgb = RGBColor(31, 78, 121)
+
+    body2 = s2.shapes.add_textbox(Inches(0.9), Inches(1.3), Inches(8.2), Inches(4.5))
+    tf2 = body2.text_frame
+    tf2.word_wrap = True
+
+    numbered_items = [
+        ("Alpha item", 0),
+        ("Beta item", 0),
+        ("Gamma item", 0),
+        ("Nested sub-item", 1),
+        ("Delta item", 0),
+    ]
+    for idx, (label, lvl) in enumerate(numbered_items):
+        para = tf2.paragraphs[0] if idx == 0 else tf2.add_paragraph()
+        para.text = label
+        para.level = lvl
+        para.runs[0].font.size = Pt(16)
+        # Inject buAutoNum via XML
+        pPr = para._p.get_or_add_pPr()
+        ban = etree.SubElement(pPr, qn("a:buAutoNum"))
+        ban.set("type", "arabicPeriod")
+
+    add_notes(s2, "Fixture 06 slide 2: auto-numbered list")
+
+    # ---------- Slide 3: buNone + spcPts fixed line height ----------
+    s3 = prs.slides.add_slide(prs.slide_layouts[6])
+    set_slide_background(s3, (255, 252, 245))
+
+    tb3 = s3.shapes.add_textbox(Inches(0.7), Inches(0.4), Inches(8.6), Inches(0.65))
+    tp3 = tb3.text_frame.paragraphs[0]
+    tp3.text = "Fixture 06: buNone + Fixed Line Spacing"
+    tp3.runs[0].font.size = Pt(24)
+    tp3.runs[0].font.bold = True
+    tp3.runs[0].font.color.rgb = RGBColor(31, 78, 121)
+
+    body3 = s3.shapes.add_textbox(Inches(0.9), Inches(1.3), Inches(8.2), Inches(4.5))
+    tf3 = body3.text_frame
+    tf3.word_wrap = True
+
+    no_bullet_items = [
+        "Fixed line height 22 pt (buNone)",
+        "Same spacing, no bullet",
+        "Third line, consistent gap",
+    ]
+    for idx, label in enumerate(no_bullet_items):
+        para = tf3.paragraphs[0] if idx == 0 else tf3.add_paragraph()
+        para.text = label
+        para.runs[0].font.size = Pt(16)
+        para.line_spacing = Pt(22)
+        # Inject buNone to suppress any inherited bullet
+        pPr = para._p.get_or_add_pPr()
+        etree.SubElement(pPr, qn("a:buNone"))
+
+    add_notes(s3, "Fixture 06 slide 3: buNone and spcPts line spacing")
+
+    out_name = "fixture-06-paragraph-spacing.pptx"
+    prs.save(OUT_DIR / out_name)
+    return out_name
+
+
 def build_manifest(files: list[str]) -> None:
     manifest = {
         "version": 1,
@@ -356,6 +468,18 @@ def build_manifest(files: list[str]) -> None:
                     "notes_non_empty": True,
                 },
             },
+            {
+                "file": files[5],
+                "purpose": "paragraph spacing + buAutoNum + buNone + spcPts",
+                "expected": {
+                    "slides": 3,
+                    "text_min": 9,
+                    "shapes_min": 0,
+                    "images": 0,
+                    "tables": 0,
+                    "notes_non_empty": True,
+                },
+            },
         ],
     }
     MANIFEST_PATH.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
@@ -370,8 +494,9 @@ def main() -> None:
     f3 = make_fixture_03_multislide_notes()
     f4 = make_fixture_04_bullets_rotation()
     f5 = make_fixture_05_group_transform()
+    f6 = make_fixture_06_paragraph_spacing()
 
-    build_manifest([f1, f2, f3, f4, f5])
+    build_manifest([f1, f2, f3, f4, f5, f6])
 
     print("Generated fixtures:")
     for p in sorted(OUT_DIR.glob("*.pptx")):

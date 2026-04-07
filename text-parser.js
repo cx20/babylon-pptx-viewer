@@ -48,6 +48,7 @@ export function parseParagraphs(txBody, defaultFS, defaultFC, layoutCap) {
     defaultFC = defaultFC || "#333";
     layoutCap = layoutCap || "";
     var result = [], paras = txBody.getElementsByTagNameNS(A_NS, "p");
+    var autoNumCounters = {}; // Track per-level auto-numbering
     for (var p = 0; p < paras.length; p++) {
         var para = paras[p], runs = para.getElementsByTagNameNS(A_NS, "r");
         var fs = defaultFS, fw = "normal", fc = defaultFC, fi = false, cap = layoutCap;
@@ -100,19 +101,74 @@ export function parseParagraphs(txBody, defaultFS, defaultFC, layoutCap) {
                 if (!isNaN(parsedLevel)) level = Math.max(0, parsedLevel);
             }
         }
-        if (pPr) {
-            var bc = pPr.getElementsByTagNameNS(A_NS, "buChar")[0];
-            if (bc && txt.trim()) txt = (bc.getAttribute("char") || "•") + " " + txt;
+
+        // Bullet / numbering (only apply if paragraph has text)
+        var hasBullet = false;
+        if (pPr && txt.trim()) {
+            var buNone = pPr.getElementsByTagNameNS(A_NS, "buNone")[0];
+            if (!buNone) {
+                var bc = pPr.getElementsByTagNameNS(A_NS, "buChar")[0];
+                var ban = pPr.getElementsByTagNameNS(A_NS, "buAutoNum")[0];
+                if (bc) {
+                    txt = (bc.getAttribute("char") || "\u2022") + " " + txt;
+                    hasBullet = true;
+                } else if (ban) {
+                    // Auto-numbering: increment counter for this level, reset deeper levels
+                    autoNumCounters[level] = (autoNumCounters[level] || 0) + 1;
+                    for (var lk in autoNumCounters) {
+                        if (parseInt(lk, 10) > level) delete autoNumCounters[lk];
+                    }
+                    var bnType = ban.getAttribute("type") || "arabicPeriod";
+                    var startAt = parseInt(ban.getAttribute("startAt"), 10) || 1;
+                    var num = autoNumCounters[level] + startAt - 1;
+                    var prefix;
+                    if (bnType === "romanLcPeriod") {
+                        var roms = ["i","ii","iii","iv","v","vi","vii","viii","ix","x"];
+                        prefix = (roms[num - 1] || num) + ". ";
+                    } else if (bnType === "alphaLcPeriod") {
+                        prefix = String.fromCharCode(96 + num) + ". ";
+                    } else {
+                        prefix = num + ". ";
+                    }
+                    txt = prefix + txt;
+                    hasBullet = true;
+                }
+            }
         }
+
         var lnSpc = 1.0;
         if (pPr) {
             var ls = pPr.getElementsByTagNameNS(A_NS, "lnSpc")[0];
             if (ls) {
                 var spcPct = ls.getElementsByTagNameNS(A_NS, "spcPct")[0];
-                if (spcPct) {
-                    var v = parseInt(spcPct.getAttribute("val")) || 100000;
+                var spcPts = ls.getElementsByTagNameNS(A_NS, "spcPts")[0];
+                if (spcPts) {
+                    // Absolute point-based line spacing
+                    var ptH = parseInt(spcPts.getAttribute("val"), 10) / 100 * 0.75; // hundredths-pt → px
+                    lnSpc = Math.max(0.8, ptH / Math.max(1, fs * 0.75)); // ratio relative to fontSize-px
+                } else if (spcPct) {
+                    var v = parseInt(spcPct.getAttribute("val"), 10) || 100000;
                     lnSpc = Math.max(0.8, Math.min(2.0, v / 100000));
                 }
+            }
+        }
+
+        // Paragraph spacing (spcBef / spcAft) in pixels
+        var spaceBefore = 0, spaceAfter = 0;
+        if (pPr) {
+            var sbb = pPr.getElementsByTagNameNS(A_NS, "spcBef")[0];
+            if (sbb) {
+                var sbbPts = sbb.getElementsByTagNameNS(A_NS, "spcPts")[0];
+                var sbbPct = sbb.getElementsByTagNameNS(A_NS, "spcPct")[0];
+                if (sbbPts) spaceBefore = parseInt(sbbPts.getAttribute("val"), 10) / 100 * 0.75;
+                else if (sbbPct) spaceBefore = (parseInt(sbbPct.getAttribute("val"), 10) / 100000) * fs * 0.75;
+            }
+            var sba = pPr.getElementsByTagNameNS(A_NS, "spcAft")[0];
+            if (sba) {
+                var sbaPts = sba.getElementsByTagNameNS(A_NS, "spcPts")[0];
+                var sbaPct = sba.getElementsByTagNameNS(A_NS, "spcPct")[0];
+                if (sbaPts) spaceAfter = parseInt(sbaPts.getAttribute("val"), 10) / 100 * 0.75;
+                else if (sbaPct) spaceAfter = (parseInt(sbaPct.getAttribute("val"), 10) / 100000) * fs * 0.75;
             }
         }
 
@@ -121,7 +177,8 @@ export function parseParagraphs(txBody, defaultFS, defaultFC, layoutCap) {
         result.push({
             text: txt, fontSize: Math.min(Math.max(fs, 6), 60),
             fontWeight: fw, color: fc, italic: fi, align: align,
-            isEmpty: txt.trim().length === 0, lineSpacing: lnSpc, level: level
+            isEmpty: txt.trim().length === 0, lineSpacing: lnSpc, level: level,
+            spaceBefore: spaceBefore, spaceAfter: spaceAfter
         });
     }
     return result;
