@@ -127,10 +127,9 @@ async function parsePptx(arrayBuffer) {
                 if (!layoutStyles.ctrTitle.fontRefColor) layoutStyles.ctrTitle.fontRefColor = masterTxStyles.titleColor;
             }
         }
-        // Master placeholder fontRef colors apply to ALL slides (including bgImage)
-        // But skip title-type placeholders on bgImage slides (they should stay white)
+        // Master placeholder fontRef colors apply to all slides, including bgImage slides.
+        // This keeps template-defined title/body colors instead of forcing white text.
         for (var phKey in masterTxStyles.phFontRef) {
-            if (hasBgImage && (phKey === "title" || phKey === "ctrTitle")) continue;
             if (!layoutStyles[phKey]) layoutStyles[phKey] = {};
             if (!layoutStyles[phKey].fontRefColor) layoutStyles[phKey].fontRefColor = masterTxStyles.phFontRef[phKey];
         }
