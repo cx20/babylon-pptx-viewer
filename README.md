@@ -195,3 +195,78 @@ npx esbuild src/index.js --bundle --format=esm --outfile=pptx-viewer.js
 4. **アニメーション**: スライドアニメーション/トランジションは未対応。
 5. **フォントサイズ**: Babylon.js GUIの制約により、元のサイズの75%でレンダリング。
 6. **埋め込みフォント**: カスタムフォントは未対応。Segoe UI/Calibriにフォールバック。
+
+## トラブルシューティング
+
+### Live Server で起動失敗
+
+#### ❌ "renderCanvas not found" / キャンバスが見つからない
+
+**原因**: `index.html` の `<canvas id="renderCanvas">` が読み込み前に参照されている。
+
+**対処**:
+1. ページを完全リロード（Ctrl+Shift+R / Cmd+Shift+R）
+2. Live Server の設定でディレイ読み込みを確認
+3. `index.html` の `<script type="module" src="index.js"></script>` が `<body>` の最後にあるか確認
+
+#### ❌ "Failed to load file library" / JSZip ロード失敗
+
+**原因**: CDNへの通信が遮断されている、またはオフライン環境。
+
+**対処**:
+1. ブラウザコンソール（F12）でネットワークエラーを確認
+2. インターネット接続を確認
+3. ファイアウォール設定で `cdnjs.cloudflare.com` へのアクセスを許可
+4. 企業ネットワークの場合、プロキシ設定を確認
+
+#### ❌ "Failed to initialize graphics engine" / グラフィックスエンジン初期化失敗
+
+**原因**: WebGL が無効、またはGPU/ドライバの非対応。
+
+**対処**:
+1. `about:gpu` (Chrome) または `about:preferences#advanced` (Firefox) でハードウェアアクセラレーション有効化
+2. グラフィックスドライバを最新版に更新
+3. 別のブラウザで試す（Chrome, Firefox, Edge）
+4. シークレット/プライベートウィンドウで試す（拡張機能との競合を排除）
+
+### PPTX 読み込み失敗
+
+#### ❌ "PPTX parse error" / ファイル解析エラー
+
+**原因**: ファイルが破損している、またはサポート外の形式。
+
+**対処**:
+1. ファイルが有効な .pptx ファイルか確認（ZIP形式で圧縮されている）
+2. PowerPoint で一度開いて上書き保存し、修復
+3. 別の .pptx ファイルで試す
+4. データURL生成時のメモリ不足は大容量ファイルの場合あり
+
+### コンソールで段階別エラー情報を確認
+
+ブラウザコンソール（F12 → Console タブ）で以下の形式のログを確認できます：
+
+```
+[INIT] boot sequence start
+[INIT/ENGINE] starting
+[INIT/ENGINE] done
+[INIT/SCENE] starting
+[INIT/SCENE] done
+[INIT/UI] starting
+[INIT/UI] done
+[INIT/INPUT] starting
+[INIT/INPUT] done
+[INIT] boot sequence complete
+```
+
+エラーが発生した場合：
+- `[INIT] failed` と表示される
+- `error code:` でエラー分類を確認
+- `dev message:` で詳細情報を確認
+
+### 既知の環境別問題
+
+| 環境 | 症状 | 原因 | 対処 |
+|------|------|------|------|
+| Windows Safari | グラフィックスが表示されない | WebGL2未対応 | Chrome/Edge を使用 |
+| iPad/iPhone | タッチで図形選択不可 | モバイルタッチイベント未対応 | テスト用にはPCブラウザを使用 |
+| VPN/プロキシ | CDN読み込み失敗 | ホワイトリスト未設定 | IT部門に `cdnjs.cloudflare.com` をホワイトリスト登録依頼 |
