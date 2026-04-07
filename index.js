@@ -23,11 +23,7 @@ var scene = null;
 var sceneToRender = null;
 var createDefaultEngine = function () { return new BABYLON.Engine(canvas, true, { preserveDrawingBuffer: true, stencil: true, disableWebGL2Support: false }); };
 
-var createScene = async function () {
-    var scene = new BABYLON.Scene(engine);
-    scene.clearColor = new BABYLON.Color3(0.08, 0.08, 0.15);
-
-    // --- Load JSZip ---
+async function ensureJsZipLoaded() {
     await new Promise(function (resolve, reject) {
         if (window.JSZip && (typeof window.JSZip.loadAsync === "function" ||
             (window.JSZip.prototype && typeof window.JSZip.prototype.loadAsync === "function"))) {
@@ -38,24 +34,58 @@ var createScene = async function () {
         s.onload = resolve; s.onerror = reject;
         document.head.appendChild(s);
     });
+}
 
-    // --- Build 3D scene ---
-    var sceneObjs = setupScene(scene, canvas);
+async function createEnginePhase() {
+    console.log("[INIT/ENGINE] starting");
+    if (!canvas) throw new Error("renderCanvas not found");
 
-    // --- Build GUI ---
+    try {
+        engine = createDefaultEngine();
+    } catch (e) {
+        console.warn("[INIT/ENGINE] createDefaultEngine failed once, retrying", e);
+        engine = createDefaultEngine();
+    }
+
+    if (!engine) throw new Error("engine should not be null");
+    window.engine = engine;
+    startRenderLoop(engine, canvas);
+    console.log("[INIT/ENGINE] done");
+    return engine;
+}
+
+async function createScenePhase() {
+    console.log("[INIT/SCENE] starting");
+    await ensureJsZipLoaded();
+
+    var sceneInstance = new BABYLON.Scene(engine);
+    sceneInstance.clearColor = new BABYLON.Color3(0.08, 0.08, 0.15);
+    var sceneObjs = setupScene(sceneInstance, canvas);
+
+    console.log("[INIT/SCENE] done");
+    return { sceneInstance: sceneInstance, sceneObjs: sceneObjs };
+}
+
+function createUiPhase(sceneInstance, sceneObjs) {
+    console.log("[INIT/UI] starting");
     var gui = buildGuiFrame(sceneObjs.screenPlane);
-
-    // --- App state (shared across all modules) ---
     var app = {
-        scene: scene,
+        scene: sceneInstance,
         gui: gui,
         slides: getDefaultSlides(),
         currentSlide: 0,
         thumbRects: []
     };
 
-    // --- Keyboard Navigation ---
-    scene.onKeyboardObservable.add(function (kb) {
+    buildThumbnails(app); renderSlide(app); updateNotes(app); updateStatus(app);
+    console.log("[INIT/UI] done");
+    return app;
+}
+
+function registerInputPhase(sceneInstance, app) {
+    console.log("[INIT/INPUT] starting");
+
+    sceneInstance.onKeyboardObservable.add(function (kb) {
         if (kb.type !== BABYLON.KeyboardEventTypes.KEYDOWN) return;
         var k = kb.event.key, ch = false;
         if (k === "ArrowRight" || k === "ArrowDown" || k === "PageDown") {
@@ -70,7 +100,6 @@ var createScene = async function () {
         }
     });
 
-    // --- Drag & Drop Handler ---
     window.__pptxGen = (window.__pptxGen || 0) + 1;
     var myGen = window.__pptxGen;
 
@@ -94,25 +123,25 @@ var createScene = async function () {
     var onDragOver = function (e) { e.preventDefault(); };
     var onDrop = async function (e) {
         e.preventDefault(); dragCounter = 0; dropOverlay.style.display = "none";
-        if (myGen !== window.__pptxGen || scene.isDisposed) return;
+        if (myGen !== window.__pptxGen || sceneInstance.isDisposed) return;
         var files = e.dataTransfer.files; if (files.length === 0) return;
         var file = files[0];
         if (!file.name.toLowerCase().endsWith(".pptx")) { alert("Please drop a .pptx file"); return; }
 
-        gui.titleText.text = "Loading: " + file.name + "...";
+        app.gui.titleText.text = "Loading: " + file.name + "...";
         try {
             var ab = await file.arrayBuffer();
-            if (scene.isDisposed || myGen !== window.__pptxGen) return;
+            if (sceneInstance.isDisposed || myGen !== window.__pptxGen) return;
             var ns = await parsePptx(ab);
-            if (scene.isDisposed || myGen !== window.__pptxGen) return;
+            if (sceneInstance.isDisposed || myGen !== window.__pptxGen) return;
             if (ns.length > 0) {
                 app.slides = ns; app.currentSlide = 0;
                 buildThumbnails(app); renderSlide(app); updateThumbs(app); updateNotes(app); updateStatus(app);
-                gui.titleText.text = file.name.replace(".pptx", "") + " - PowerPoint";
+                app.gui.titleText.text = file.name.replace(".pptx", "") + " - PowerPoint";
             }
         } catch (err) {
             console.error("PPTX parse error:", err);
-            if (!scene.isDisposed) gui.titleText.text = "Error: " + err.message;
+            if (!sceneInstance.isDisposed) app.gui.titleText.text = "Error: " + err.message;
         }
     };
 
@@ -121,7 +150,7 @@ var createScene = async function () {
     document.addEventListener("dragover", onDragOver);
     document.addEventListener("drop", onDrop);
 
-    scene.onDisposeObservable.add(function () {
+    sceneInstance.onDisposeObservable.add(function () {
         document.removeEventListener("dragenter", onDragEnter);
         document.removeEventListener("dragleave", onDragLeave);
         document.removeEventListener("dragover", onDragOver);
@@ -129,43 +158,36 @@ var createScene = async function () {
         if (dropOverlay.parentNode) dropOverlay.parentNode.removeChild(dropOverlay);
     });
 
-    // --- Initial Render ---
-    buildThumbnails(app); renderSlide(app); updateNotes(app); updateStatus(app);
+    console.log("[INIT/INPUT] done");
+}
 
+async function runAppInit() {
+    console.log("[INIT] boot sequence start");
+    await createEnginePhase();
+    var sceneResult = await createScenePhase();
+    var sceneInstance = sceneResult.sceneInstance;
+    var sceneObjs = sceneResult.sceneObjs;
+    var app = createUiPhase(sceneInstance, sceneObjs);
+    registerInputPhase(sceneInstance, app);
+
+    scene = Promise.resolve(sceneInstance);
+    window.scene = scene;
+    sceneToRender = sceneInstance;
+    console.log("[INIT] boot sequence complete");
     return scene;
-};
+}
 
-window.initFunction = async function() {
+window.initFunction = runAppInit;
 
-  var asyncEngineCreation = async function() {
-    try {
-      return createDefaultEngine();
-    } catch(e) {
-      console.log("the available createEngine function failed. Creating the default engine instead");
-      return createDefaultEngine();
-    }
-  }
-
-  engine = await asyncEngineCreation();
-  window.engine = engine;
-
-  const engineOptions = engine.getCreationOptions?.();
-  if (!engineOptions || engineOptions.audioEngine !== false) {
-
-  }
-  if (!engine) throw 'engine should not be null.';
-  startRenderLoop(engine, canvas);
-  scene = createScene();
-  window.scene = scene;
-};
-
-initFunction().then(() => {
-  scene.then(returnedScene => { sceneToRender = returnedScene; });
+runAppInit().catch(function (err) {
+    console.error("[INIT] failed", err);
+    throw err;
 });
 
 // Resize
 window.addEventListener("resize", function () {
-  engine.resize();
+    if (engine) engine.resize();
 });
 
+var createScene = runAppInit;
 export default createScene;
