@@ -13,6 +13,7 @@ function parseShapeTree(spTreeNode, slideW, slideH, images, relsAll, opts) {
     var hasBgImage = opts.hasBgImage || false;
     var layoutStyles = opts.layoutStyles || {};
     var chartDataMap = opts.chartDataMap || {};
+    var diagramDataMap = opts.diagramDataMap || {};
     // Prefer theme text color regardless of background image presence.
     // Per-template placeholder/style inheritance can still override this later.
     var defaultTextColor = themeColors.tx1 || "#333";
@@ -67,7 +68,7 @@ function parseShapeTree(spTreeNode, slideW, slideH, images, relsAll, opts) {
         }
         // --- graphicFrame (chart / table / diagram) ---
         else if (localName === "graphicFrame") {
-            parseGraphicFrame(child, elements, slideW, slideH, images, relsAll, chartDataMap, defaultTextColor, toFracX, toFracY, toFracW, toFracH);
+            parseGraphicFrame(child, elements, slideW, slideH, images, relsAll, chartDataMap, diagramDataMap, defaultTextColor, toFracX, toFracY, toFracW, toFracH);
         }
     }
     return elements;
@@ -338,6 +339,7 @@ function parseGrpSp(grpSp, elements, slideW, slideH, images, relsAll, parentOpts
         hasBgImage: parentOpts ? parentOpts.hasBgImage : false,
         layoutStyles: parentOpts ? (parentOpts.layoutStyles || {}) : {},
         chartDataMap: parentOpts ? (parentOpts.chartDataMap || {}) : {},
+        diagramDataMap: parentOpts ? (parentOpts.diagramDataMap || {}) : {},
         gOffX: newGOffX, gOffY: newGOffY,
         gScaleX: newGScaleX, gScaleY: newGScaleY
     };
@@ -348,7 +350,7 @@ function parseGrpSp(grpSp, elements, slideW, slideH, images, relsAll, parentOpts
 }
 
 // --- Parse graphicFrame (chart / table / diagram) ---
-function parseGraphicFrame(gf, elements, slideW, slideH, images, relsAll, chartDataMap, defTextColor, fx, fy, fw, fh) {
+function parseGraphicFrame(gf, elements, slideW, slideH, images, relsAll, chartDataMap, diagramDataMap, defTextColor, fx, fy, fw, fh) {
     // graphicFrame uses p:xfrm, not a:xfrm
     var xfrm = gf.getElementsByTagNameNS(P_NS, "xfrm")[0];
     if (!xfrm) xfrm = gf.getElementsByTagNameNS(A_NS, "xfrm")[0];
@@ -402,6 +404,26 @@ function parseGraphicFrame(gf, elements, slideW, slideH, images, relsAll, chartD
         }
     }
 
+    if (uri.indexOf("diagram") !== -1 && graphicData) {
+        var relIdsNode = null;
+        for (var ri = 0; ri < graphicData.childNodes.length; ri++) {
+            var rn = graphicData.childNodes[ri];
+            if (rn.nodeType === 1 && rn.localName === "relIds") { relIdsNode = rn; break; }
+        }
+        var dmRid = "";
+        if (relIdsNode) {
+            dmRid = relIdsNode.getAttribute("r:dm") || relIdsNode.getAttributeNS(R_NS, "dm") || relIdsNode.getAttribute("dm") || "";
+        }
+        var dgm = dmRid ? diagramDataMap[dmRid] : null;
+        if (!dgm) {
+            for (var key in diagramDataMap) {
+                dgm = diagramDataMap[key];
+                if (dgm) break;
+            }
+        }
+        if (renderSmartArtDiagram(dgm, elements, fracX, fracY, fracW, fracH, defTextColor)) return;
+    }
+
     // Table (a:tbl)
     if (uri.indexOf("table") !== -1 || uri.indexOf("dgm") !== -1) {
         parseTable(graphicData, elements, fracX, fracY, fracW, fracH, defTextColor);
@@ -424,6 +446,215 @@ function parseGraphicFrame(gf, elements, slideW, slideH, images, relsAll, chartD
         x: fracX, y: fracY + fracH * 0.35, w: fracW,
         fontSize: 12, color: "#666", fontWeight: "normal", fontStyle: "normal", align: "center"
     }));
+}
+
+function parseGdValue(gdNode) {
+    if (!gdNode) return 0;
+    var fmla = gdNode.getAttribute("fmla") || "";
+    var m = fmla.match(/val\s+(-?\d+)/i);
+    return m ? (parseInt(m[1], 10) || 0) : 0;
+}
+
+function readTextFromTxBody(txBody) {
+    if (!txBody) return "";
+    var ts = txBody.getElementsByTagNameNS(A_NS, "t");
+    var parts = [];
+    for (var i = 0; i < ts.length; i++) {
+        var tx = (ts[i].textContent || "").trim();
+        if (tx) parts.push(tx);
+    }
+    return parts.join(" ").trim();
+}
+
+function readTextColorFromTxBody(txBody, fallbackColor) {
+    if (!txBody) return fallbackColor;
+    var rPr = txBody.getElementsByTagNameNS(A_NS, "rPr")[0] || txBody.getElementsByTagNameNS(A_NS, "endParaRPr")[0];
+    if (!rPr) return fallbackColor;
+    var sf = rPr.getElementsByTagNameNS(A_NS, "solidFill")[0];
+    if (!sf) return fallbackColor;
+    var c = resolveColor(sf);
+    return c || fallbackColor;
+}
+
+function parseSimpleXfrm(node) {
+    if (!node) return null;
+    var xfrm = null;
+    if (node.localName === "xfrm" || node.localName === "txXfrm") xfrm = node;
+    if (!xfrm) xfrm = node.getElementsByTagNameNS(A_NS, "xfrm")[0];
+    if (!xfrm) return null;
+
+    var off = xfrm.getElementsByTagNameNS(A_NS, "off")[0] || xfrm.getElementsByTagNameNS("*", "off")[0];
+    var ext = xfrm.getElementsByTagNameNS(A_NS, "ext")[0] || xfrm.getElementsByTagNameNS("*", "ext")[0];
+    if (!off || !ext) return null;
+    return {
+        x: parseInt(off.getAttribute("x"), 10) || 0,
+        y: parseInt(off.getAttribute("y"), 10) || 0,
+        w: parseInt(ext.getAttribute("cx"), 10) || 0,
+        h: parseInt(ext.getAttribute("cy"), 10) || 0
+    };
+}
+
+function renderSmartArtDiagram(diagramEntry, elements, fracX, fracY, fracW, fracH, defTextColor) {
+    if (!diagramEntry) return false;
+    if (renderSmartArtFromDrawing(diagramEntry, elements, fracX, fracY, fracW, fracH, defTextColor)) return true;
+    return renderSmartArtFallbackFromData(diagramEntry, elements, fracX, fracY, fracW, fracH, defTextColor);
+}
+
+function renderSmartArtFromDrawing(diagramEntry, elements, fracX, fracY, fracW, fracH, defTextColor) {
+    var drawingDoc = diagramEntry.drawingDoc;
+    if (!drawingDoc) return false;
+    var spNodes = drawingDoc.getElementsByTagName("dsp:sp");
+    if (!spNodes || spNodes.length === 0) {
+        spNodes = drawingDoc.getElementsByTagNameNS("*", "sp");
+    }
+    if (!spNodes || spNodes.length === 0) return false;
+
+    var pieParts = [];
+    var textEls = [];
+    var minX = Number.POSITIVE_INFINITY, minY = Number.POSITIVE_INFINITY;
+    var maxX = Number.NEGATIVE_INFINITY, maxY = Number.NEGATIVE_INFINITY;
+
+    for (var i = 0; i < spNodes.length; i++) {
+        var sp = spNodes[i];
+        var spPr = sp.getElementsByTagNameNS("*", "spPr")[0];
+        if (!spPr) continue;
+        var geom = spPr.getElementsByTagNameNS(A_NS, "prstGeom")[0];
+        if (!geom || geom.getAttribute("prst") !== "pie") continue;
+
+        var x = parseSimpleXfrm(spPr);
+        if (!x || x.w <= 0 || x.h <= 0) continue;
+        minX = Math.min(minX, x.x);
+        minY = Math.min(minY, x.y);
+        maxX = Math.max(maxX, x.x + x.w);
+        maxY = Math.max(maxY, x.y + x.h);
+
+        var gdNodes = geom.getElementsByTagNameNS(A_NS, "gd");
+        var adj1 = 0, adj2 = 21600000;
+        for (var g = 0; g < gdNodes.length; g++) {
+            var name = gdNodes[g].getAttribute("name") || "";
+            if (name === "adj1") adj1 = parseGdValue(gdNodes[g]);
+            if (name === "adj2") adj2 = parseGdValue(gdNodes[g]);
+        }
+
+        var txBody = sp.getElementsByTagNameNS("*", "txBody")[0];
+        var txXfrmNode = sp.getElementsByTagNameNS("*", "txXfrm")[0];
+        var txXfrm = parseSimpleXfrm(txXfrmNode);
+
+        pieParts.push({
+            xfrm: x,
+            txXfrm: txXfrm,
+            text: readTextFromTxBody(txBody),
+            startDeg: adj1 / 60000,
+            endDeg: adj2 / 60000,
+            fillColor: getShapeFill(spPr) || "#5B7FC5",
+            textColor: readTextColorFromTxBody(txBody, defTextColor || "#FFFFFF")
+        });
+    }
+
+    if (pieParts.length === 0 || !Number.isFinite(minX) || !Number.isFinite(maxX) || maxX <= minX || maxY <= minY) {
+        return false;
+    }
+
+    var bw = maxX - minX;
+    var bh = maxY - minY;
+    function mapX(v) { return fracX + ((v - minX) / bw) * fracW; }
+    function mapY(v) { return fracY + ((v - minY) / bh) * fracH; }
+    function mapW(v) { return (v / bw) * fracW; }
+    function mapH(v) { return (v / bh) * fracH; }
+
+    for (var p = 0; p < pieParts.length; p++) {
+        var part = pieParts[p];
+        var sx = mapX(part.xfrm.x);
+        var sy = mapY(part.xfrm.y);
+        var sw = mapW(part.xfrm.w);
+        var sh = mapH(part.xfrm.h);
+        elements.push(normalizeElement({
+            type: "shape", shape: "pie",
+            x: sx, y: sy, w: sw, h: sh,
+            fillColor: part.fillColor,
+            strokeColor: "transparent",
+            thickness: 0,
+            pieStart: part.startDeg,
+            pieEnd: part.endDeg
+        }));
+
+        var tx = sx + sw * 0.25;
+        var ty = sy + sh * 0.42;
+        var tw = sw * 0.5;
+        var th = sh * 0.12;
+        if (part.txXfrm && part.txXfrm.w > 0 && part.txXfrm.h > 0) {
+            // Drawing part already stores text box geometry for each wedge.
+            tx = mapX(part.txXfrm.x);
+            ty = mapY(part.txXfrm.y);
+            tw = mapW(part.txXfrm.w);
+            th = mapH(part.txXfrm.h);
+        } else {
+            // Fallback when text transform is missing.
+            var midDeg = (part.startDeg + part.endDeg) * 0.5;
+            var rad = midDeg * Math.PI / 180;
+            var r = Math.min(sw, sh) * 0.28;
+            tx = sx + sw * 0.5 + Math.cos(rad) * r - sw * 0.18;
+            ty = sy + sh * 0.5 + Math.sin(rad) * r - sh * 0.06;
+            tw = sw * 0.36;
+            th = sh * 0.12;
+        }
+        if (part.text) {
+            textEls.push(normalizeElement({
+                type: "text", text: part.text,
+                x: tx, y: ty, w: tw,
+                fontSize: Math.max(12, Math.round((th || sh * 0.12) * CANVAS_H * 0.65)),
+                color: part.textColor,
+                align: "center",
+                fontWeight: "normal"
+            }));
+        }
+    }
+    for (var ti = 0; ti < textEls.length; ti++) elements.push(textEls[ti]);
+    return true;
+}
+
+function renderSmartArtFallbackFromData(diagramEntry, elements, fracX, fracY, fracW, fracH, defTextColor) {
+    var dataDoc = diagramEntry.dataDoc;
+    if (!dataDoc) return false;
+    var ptNodes = dataDoc.getElementsByTagNameNS("*", "pt");
+    var labels = [];
+    for (var i = 0; i < ptNodes.length; i++) {
+        var pt = ptNodes[i];
+        var t = pt.getAttribute("type") || "";
+        if (t === "doc" || t === "pres" || t === "parTrans" || t === "sibTrans") continue;
+        var tx = readTextFromTxBody(pt);
+        if (tx) labels.push(tx);
+    }
+    labels = labels.slice(0, 7);
+    if (labels.length === 0) return false;
+
+    var palette = ["#466CB4", "#6E88C8", "#95A6D2", "#B5C1DF", "#7A95CF", "#5D7FC0", "#8AA0CF"];
+    var textEls = [];
+    var n = labels.length;
+    for (var li = 0; li < n; li++) {
+        var start = (li * 360) / n;
+        var end = ((li + 1) * 360) / n;
+        var offset = li === 0 ? 0.015 : 0;
+        var midRad = ((start + end) * 0.5) * Math.PI / 180;
+        var ox = Math.cos(midRad) * offset;
+        var oy = Math.sin(midRad) * offset;
+        elements.push(normalizeElement({
+            type: "shape", shape: "pie",
+            x: fracX + ox, y: fracY + oy, w: fracW, h: fracH,
+            fillColor: palette[li % palette.length],
+            strokeColor: "transparent", thickness: 0,
+            pieStart: start, pieEnd: end
+        }));
+        textEls.push(normalizeElement({
+            type: "text", text: labels[li],
+            x: fracX + fracW * (0.5 + Math.cos(midRad) * 0.28) - fracW * 0.12 + ox,
+            y: fracY + fracH * (0.5 + Math.sin(midRad) * 0.28) - fracH * 0.05 + oy,
+            w: fracW * 0.24,
+            fontSize: 20, color: defTextColor || "#FFFFFF", align: "center"
+        }));
+    }
+    for (var tj = 0; tj < textEls.length; tj++) elements.push(textEls[tj]);
+    return true;
 }
 
 function renderBarChart(chartData, elements, fracX, fracY, fracW, fracH, defTextColor) {

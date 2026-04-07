@@ -161,6 +161,96 @@ async function buildChartDataMap(zip, slideBasePath, relsAll) {
     return map;
 }
 
+async function loadXmlPart(zip, fullPath) {
+    var f = zip.file(fullPath);
+    if (!f) return null;
+    try {
+        return new DOMParser().parseFromString(await f.async("string"), "application/xml");
+    } catch (e) {
+        console.warn("[PPTX] Failed to parse XML part:", fullPath, e);
+        return null;
+    }
+}
+
+function resolvePartPath(basePath, target) {
+    return (basePath + target).replace(/[^/]+\/\.\.\//g, "");
+}
+
+async function buildDiagramDataMap(zip, slideBasePath, relsAll) {
+    var map = {};
+    if (!relsAll) return map;
+
+    var globalLayoutPath = null;
+    var globalQuickStylePath = null;
+    var globalColorsPath = null;
+    var globalDrawingPath = null;
+
+    for (var rid0 in relsAll) {
+        var t0 = (relsAll[rid0] || "").toLowerCase();
+        if (t0.indexOf("/diagrams/") === -1) continue;
+        if (t0.indexOf("layout") !== -1 && !globalLayoutPath) globalLayoutPath = resolvePartPath(slideBasePath, relsAll[rid0]);
+        else if (t0.indexOf("quickstyle") !== -1 && !globalQuickStylePath) globalQuickStylePath = resolvePartPath(slideBasePath, relsAll[rid0]);
+        else if (t0.indexOf("colors") !== -1 && !globalColorsPath) globalColorsPath = resolvePartPath(slideBasePath, relsAll[rid0]);
+        else if (t0.indexOf("drawing") !== -1 && !globalDrawingPath) globalDrawingPath = resolvePartPath(slideBasePath, relsAll[rid0]);
+    }
+
+    for (var rId in relsAll) {
+        var target = relsAll[rId] || "";
+        if (target.indexOf("/diagrams/") === -1 || target.toLowerCase().indexOf("data") === -1 || target.toLowerCase().indexOf(".xml") === -1) {
+            continue;
+        }
+
+        var dataPath = resolvePartPath(slideBasePath, target);
+        var dataDoc = await loadXmlPart(zip, dataPath);
+        if (!dataDoc) continue;
+
+        var dataDir = dataPath.replace(/[^/]*$/, "");
+        var relsPath = dataPath.replace(/([^/]+)$/, "_rels/$1.rels");
+        var rels = await parseRelsFile(zip, relsPath);
+
+        var entry = {
+            dataDoc: dataDoc,
+            drawingDoc: null,
+            layoutDoc: null,
+            quickStyleDoc: null,
+            colorsDoc: null
+        };
+
+        // 1) Prefer data part local rels if present
+        for (var drId in rels.all) {
+            var partTarget = rels.all[drId] || "";
+            var fullPath = resolvePartPath(dataDir, partTarget);
+            var lower = fullPath.toLowerCase();
+            if (lower.indexOf("drawing") !== -1) entry.drawingDoc = await loadXmlPart(zip, fullPath);
+            else if (lower.indexOf("layout") !== -1) entry.layoutDoc = await loadXmlPart(zip, fullPath);
+            else if (lower.indexOf("quickstyle") !== -1) entry.quickStyleDoc = await loadXmlPart(zip, fullPath);
+            else if (lower.indexOf("colors") !== -1) entry.colorsDoc = await loadXmlPart(zip, fullPath);
+        }
+
+        // 2) Fallback: dataModelExt relId often points to drawing part in slide rels
+        if (!entry.drawingDoc) {
+            var extNodes = dataDoc.getElementsByTagNameNS("*", "dataModelExt");
+            if (extNodes && extNodes.length > 0) {
+                var drawingRid = extNodes[0].getAttribute("relId") || extNodes[0].getAttribute("r:relId") || "";
+                if (drawingRid && relsAll[drawingRid]) {
+                    entry.drawingDoc = await loadXmlPart(zip, resolvePartPath(slideBasePath, relsAll[drawingRid]));
+                }
+            }
+        }
+
+        // 3) Fallback: slide rels often contain layout/quickStyle/colors directly
+        if (!entry.layoutDoc && globalLayoutPath) entry.layoutDoc = await loadXmlPart(zip, globalLayoutPath);
+        if (!entry.quickStyleDoc && globalQuickStylePath) entry.quickStyleDoc = await loadXmlPart(zip, globalQuickStylePath);
+        if (!entry.colorsDoc && globalColorsPath) entry.colorsDoc = await loadXmlPart(zip, globalColorsPath);
+        if (!entry.drawingDoc && globalDrawingPath) entry.drawingDoc = await loadXmlPart(zip, globalDrawingPath);
+
+        map[rId] = entry;
+        console.log("[PPTX] Diagram loaded for " + rId + ": data=" + !!entry.dataDoc + " drawing=" + !!entry.drawingDoc + " quickStyle=" + !!entry.quickStyleDoc + " colors=" + !!entry.colorsDoc);
+    }
+
+    return map;
+}
+
 async function parsePptx(arrayBuffer) {
     var t0 = performance.now();
     console.log("[PPTX] === Starting PPTX parse ===");
@@ -222,6 +312,7 @@ async function parsePptx(arrayBuffer) {
 
         // Build chart data map from related chart parts
         var chartDataMap = await buildChartDataMap(zip, "ppt/slides/", slideRels.all);
+        var diagramDataMap = await buildDiagramDataMap(zip, "ppt/slides/", slideRels.all);
 
         // === Background inheritance: slide → layout → master ===
         var bgResult = await extractBackground(xmlStr, zip, "ppt/slides/", slideRels.all, slideW, slideH);
@@ -293,7 +384,7 @@ async function parsePptx(arrayBuffer) {
             if (!layoutStyles.subTitle) layoutStyles.subTitle = {};
             layoutStyles.subTitle.fontRefColor = masterTxStyles.phFontRef.body;
         }
-        var parsed = parseSlideXml(xmlStr, slideW, slideH, images, slideRels.all, hasBgImage, false, layoutStyles, chartDataMap);
+        var parsed = parseSlideXml(xmlStr, slideW, slideH, images, slideRels.all, hasBgImage, false, layoutStyles, chartDataMap, diagramDataMap);
         console.log("[PPTX] Slide " + sf.num + " own elements: " + parsed.elements.length);
 
         // Parse layout shapes (non-placeholder decorations only)
@@ -306,7 +397,7 @@ async function parsePptx(arrayBuffer) {
                 var layoutRels2 = await parseRelsFile(zip, layoutPath2.replace(/([^/]+)$/, "_rels/$1.rels"));
                 var layoutImgs = await buildImageMap(zip, layoutBase2, layoutRels2.images);
                 var layoutParsed = parseSlideXml(
-                    await layoutFile.async("string"), slideW, slideH, layoutImgs, layoutRels2.all, hasBgImage, true, {}, {}
+                    await layoutFile.async("string"), slideW, slideH, layoutImgs, layoutRels2.all, hasBgImage, true, {}, {}, {}
                 );
                 console.log("[PPTX]   layout contributed " + layoutParsed.elements.length + " elements");
                 parsed.elements = layoutParsed.elements.concat(parsed.elements);
