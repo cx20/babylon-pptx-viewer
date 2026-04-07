@@ -10,6 +10,28 @@ import { renderSlide, buildThumbnails, updateThumbs, updateNotes, updateStatus }
 
 var canvas = document.getElementById("renderCanvas");
 
+var AppError = function(code, userMsg, devMsg) {
+    this.code = code;  // e.g., 'CANVAS_NOT_FOUND', 'ENGINE_INIT_FAIL', 'JSZIP_LOAD_FAIL', 'SCENE_BUILD_FAIL'
+    this.userMsg = userMsg;  // user-facing message for UI
+    this.devMsg = devMsg;     // detailed message for console
+};
+AppError.prototype = Object.create(Error.prototype);
+AppError.prototype.constructor = AppError;
+
+var showErrorOnUI = function(titleTextElement, errObj) {
+    if (!titleTextElement) return; // UI not ready
+    if (errObj instanceof AppError) {
+        titleTextElement.text = "❌ " + errObj.userMsg;
+        titleTextElement.color = "#E81123";
+    } else if (errObj && errObj.message) {
+        titleTextElement.text = "❌ Error: " + errObj.message;
+        titleTextElement.color = "#E81123";
+    } else {
+        titleTextElement.text = "❌ Unknown error occurred";
+        titleTextElement.color = "#E81123";
+    }
+};
+
 var startRenderLoop = function (engine, canvas) {
   engine.runRenderLoop(function () {
     if (sceneToRender && sceneToRender.activeCamera) {
@@ -24,30 +46,57 @@ var sceneToRender = null;
 var createDefaultEngine = function () { return new BABYLON.Engine(canvas, true, { preserveDrawingBuffer: true, stencil: true, disableWebGL2Support: false }); };
 
 async function ensureJsZipLoaded() {
-    await new Promise(function (resolve, reject) {
+    return await new Promise(function (resolve, reject) {
         if (window.JSZip && (typeof window.JSZip.loadAsync === "function" ||
             (window.JSZip.prototype && typeof window.JSZip.prototype.loadAsync === "function"))) {
             resolve(); return;
         }
         var s = document.createElement("script");
         s.src = "https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js";
-        s.onload = resolve; s.onerror = reject;
+        s.onload = resolve;
+        s.onerror = function() {
+            reject(new AppError(
+                'JSZIP_LOAD_FAIL',
+                'Failed to load file library. Check your internet connection.',
+                'JSZip CDN load failed'
+            ));
+        };
         document.head.appendChild(s);
     });
 }
 
 async function createEnginePhase() {
     console.log("[INIT/ENGINE] starting");
-    if (!canvas) throw new Error("renderCanvas not found");
+    if (!canvas) {
+        throw new AppError(
+            'CANVAS_NOT_FOUND',
+            'Render canvas element not found. Page may be incomplete.',
+            'renderCanvas element not found in DOM'
+        );
+    }
 
     try {
         engine = createDefaultEngine();
     } catch (e) {
         console.warn("[INIT/ENGINE] createDefaultEngine failed once, retrying", e);
-        engine = createDefaultEngine();
+        try {
+            engine = createDefaultEngine();
+        } catch (e2) {
+            throw new AppError(
+                'ENGINE_INIT_FAIL',
+                'Failed to initialize graphics engine. WebGL may not be supported.',
+                'Babylon.js Engine creation failed: ' + (e2.message || e2)
+            );
+        }
     }
 
-    if (!engine) throw new Error("engine should not be null");
+    if (!engine) {
+        throw new AppError(
+            'ENGINE_NULL',
+            'Graphics engine initialization failed.',
+            'engine is null after creation'
+        );
+    }
     window.engine = engine;
     startRenderLoop(engine, canvas);
     console.log("[INIT/ENGINE] done");
@@ -56,30 +105,54 @@ async function createEnginePhase() {
 
 async function createScenePhase() {
     console.log("[INIT/SCENE] starting");
-    await ensureJsZipLoaded();
+    try {
+        await ensureJsZipLoaded();
+    } catch (e) {
+        if (e instanceof AppError) throw e;
+        throw new AppError(
+            'JSZIP_LOAD_FAIL',
+            'Failed to load file library. Check your internet connection.',
+            (e && e.message) || String(e)
+        );
+    }
 
-    var sceneInstance = new BABYLON.Scene(engine);
-    sceneInstance.clearColor = new BABYLON.Color3(0.08, 0.08, 0.15);
-    var sceneObjs = setupScene(sceneInstance, canvas);
-
-    console.log("[INIT/SCENE] done");
-    return { sceneInstance: sceneInstance, sceneObjs: sceneObjs };
+    try {
+        var sceneInstance = new BABYLON.Scene(engine);
+        sceneInstance.clearColor = new BABYLON.Color3(0.08, 0.08, 0.15);
+        var sceneObjs = setupScene(sceneInstance, canvas);
+        console.log("[INIT/SCENE] done");
+        return { sceneInstance: sceneInstance, sceneObjs: sceneObjs };
+    } catch (e) {
+        throw new AppError(
+            'SCENE_BUILD_FAIL',
+            'Failed to build 3D scene. Your graphics drivers may need updating.',
+            (e && e.message) || String(e)
+        );
+    }
 }
 
 function createUiPhase(sceneInstance, sceneObjs) {
     console.log("[INIT/UI] starting");
-    var gui = buildGuiFrame(sceneObjs.screenPlane);
-    var app = {
-        scene: sceneInstance,
-        gui: gui,
-        slides: getDefaultSlides(),
-        currentSlide: 0,
-        thumbRects: []
-    };
+    try {
+        var gui = buildGuiFrame(sceneObjs.screenPlane);
+        var app = {
+            scene: sceneInstance,
+            gui: gui,
+            slides: getDefaultSlides(),
+            currentSlide: 0,
+            thumbRects: []
+        };
 
-    buildThumbnails(app); renderSlide(app); updateNotes(app); updateStatus(app);
-    console.log("[INIT/UI] done");
-    return app;
+        buildThumbnails(app); renderSlide(app); updateNotes(app); updateStatus(app);
+        console.log("[INIT/UI] done");
+        return app;
+    } catch (e) {
+        throw new AppError(
+            'UI_BUILD_FAIL',
+            'Failed to build user interface.',
+            (e && e.message) || String(e)
+        );
+    }
 }
 
 function registerInputPhase(sceneInstance, app) {
@@ -163,25 +236,38 @@ function registerInputPhase(sceneInstance, app) {
 
 async function runAppInit() {
     console.log("[INIT] boot sequence start");
-    await createEnginePhase();
-    var sceneResult = await createScenePhase();
-    var sceneInstance = sceneResult.sceneInstance;
-    var sceneObjs = sceneResult.sceneObjs;
-    var app = createUiPhase(sceneInstance, sceneObjs);
-    registerInputPhase(sceneInstance, app);
+    var app = null;
+    try {
+        await createEnginePhase();
+        var sceneResult = await createScenePhase();
+        var sceneInstance = sceneResult.sceneInstance;
+        var sceneObjs = sceneResult.sceneObjs;
+        app = createUiPhase(sceneInstance, sceneObjs);
+        registerInputPhase(sceneInstance, app);
 
-    scene = Promise.resolve(sceneInstance);
-    window.scene = scene;
-    sceneToRender = sceneInstance;
-    console.log("[INIT] boot sequence complete");
-    return scene;
+        scene = Promise.resolve(sceneInstance);
+        window.scene = scene;
+        sceneToRender = sceneInstance;
+        console.log("[INIT] boot sequence complete");
+        return scene;
+    } catch (err) {
+        console.error("[INIT] failed", err);
+        if (err instanceof AppError) {
+            console.error("[INIT] error code:", err.code);
+            console.error("[INIT] dev message:", err.devMsg);
+            // Try to display user-friendly message on UI if available
+            if (app && app.gui && app.gui.titleText) {
+                showErrorOnUI(app.gui.titleText, err);
+            }
+        }
+        throw err;
+    }
 }
 
 window.initFunction = runAppInit;
 
 runAppInit().catch(function (err) {
-    console.error("[INIT] failed", err);
-    throw err;
+    console.error("[INIT] unhandled error during boot", err);
 });
 
 // Resize
