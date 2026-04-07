@@ -165,6 +165,19 @@ export function resolveColor(node) {
     if (!node) return null;
     var srgb = node.getElementsByTagNameNS(A_NS, "srgbClr")[0];
     if (srgb) return applyColorModifiers("#" + srgb.getAttribute("val"), srgb);
+    var scrgb = node.getElementsByTagNameNS(A_NS, "scrgbClr")[0];
+    if (scrgb) {
+        var rr = parseInt(scrgb.getAttribute("r") || "0", 10);
+        var gg = parseInt(scrgb.getAttribute("g") || "0", 10);
+        var bb = parseInt(scrgb.getAttribute("b") || "0", 10);
+        if (!Number.isFinite(rr)) rr = 0;
+        if (!Number.isFinite(gg)) gg = 0;
+        if (!Number.isFinite(bb)) bb = 0;
+        rr = Math.max(0, Math.min(100000, rr));
+        gg = Math.max(0, Math.min(100000, gg));
+        bb = Math.max(0, Math.min(100000, bb));
+        return applyColorModifiers(rgbToHex(rr * 255 / 100000, gg * 255 / 100000, bb * 255 / 100000), scrgb);
+    }
     var scheme = node.getElementsByTagNameNS(A_NS, "schemeClr")[0];
     if (scheme) {
         var val = scheme.getAttribute("val") || "";
