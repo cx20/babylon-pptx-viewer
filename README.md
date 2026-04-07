@@ -1,312 +1,317 @@
 # PPTX Viewer - Babylon.js PowerPoint Simulator
 
-3Dモニター上にPowerPointファイル(.pptx)をドラッグ&ドロップで読み込み、Babylon.js GUIでレンダリングするビューアです。
+A viewer that loads PowerPoint files (.pptx) via drag-and-drop onto a 3D monitor and renders slides using Babylon.js GUI.
 
-## デモ
+## Demo
 
-Babylon.js Playground v2 で動作します。Playground v2 は複数ファイル・ESモジュールに対応しているため、各 `.js` ファイルをタブに追加してそのまま実行できます。
+Runs in Babylon.js Playground v2.
+Playground v2 supports multi-file projects and ES modules, so you can add each .js file in separate tabs and run directly.
 
-## ファイル構成
+## File Structure
 
-```
+```text
 pptx-viewer/
-├── README.md              ← このファイル
-└── src/
-    ├── index.js           ← エントリポイント（createScene, D&D, キーボード操作）
-    ├── constants.js       ← 定数（EMU, キャンバスサイズ, 名前空間, デフォルトスライド）
-    ├── color-utils.js     ← 色解決（テーマ色, schemeClr/srgbClr, shade/tint修飾子）
-    ├── zip-helpers.js     ← ZIP操作（.rels解析, 画像データURL変換）
-    ├── background.js      ← 背景抽出（画像/単色, duotone/アート効果検出）
-    ├── text-parser.js     ← テキスト解析（段落, フォント, アウトライン, ジオメトリ）
-    ├── style-inheritance.js ← スタイル継承（レイアウト/マスターからの継承チェーン）
-    ├── shape-parsers.js   ← シェイプ解析（sp, pic, cxnSp, grpSp, graphicFrame, table）
-    ├── slide-parser.js    ← スライドXML→要素配列変換
-    ├── pptx-parser.js     ← メインオーケストレーター（ZIP展開→全スライド解析）
-    ├── scene-setup.js     ← 3Dシーン構築（カメラ, ライト, PCモデル）
-    ├── gui-frame.js       ← PowerPoint UIフレーム（タイトルバー, リボン, パネル）
-    └── slide-renderer.js  ← スライド描画（メインキャンバス + サムネイル）
+|- README.md
+|- index.html
+|- index.js
+|- constants.js
+|- color-utils.js
+|- zip-helpers.js
+|- background.js
+|- text-parser.js
+|- style-inheritance.js
+|- shape-parsers.js
+|- slide-parser.js
+|- pptx-parser.js
+|- scene-setup.js
+|- gui-frame.js
+`- slide-renderer.js
 ```
 
-## アーキテクチャ
+## Architecture
 
-### データフロー
+### Data Flow
 
-```
+```text
 .pptx file (ZIP)
-    │
-    ▼
-┌─────────────┐    ┌──────────────┐    ┌───────────────────┐
-│ zip-helpers  │───▶│ color-utils  │───▶│ style-inheritance │
-│ (ZIP/rels)   │    │ (theme)      │    │ (layout/master)   │
-└─────────────┘    └──────────────┘    └───────────────────┘
-    │                                          │
-    ▼                                          ▼
-┌─────────────┐    ┌──────────────┐    ┌───────────────────┐
-│ background   │    │ text-parser  │───▶│ shape-parsers     │
-│ (bg/effects) │    │ (paragraphs) │    │ (sp/pic/grp/gf)   │
-└─────────────┘    └──────────────┘    └───────────────────┘
-    │                                          │
-    ▼                                          ▼
-┌─────────────────────────────────────────────────────────┐
-│                    pptx-parser.js                        │
-│         (orchestrates all parsing, builds slides[])      │
-└─────────────────────────────────────────────────────────┘
-    │
-    ▼
-┌─────────────────────────────────────────────────────────┐
-│                   slide-renderer.js                      │
-│         (renders slides to Babylon.js GUI canvas)        │
-└─────────────────────────────────────────────────────────┘
+    |
+    v
++-------------+    +-------------+    +-------------------+
+| zip-helpers | -> | color-utils | -> | style-inheritance |
+| (ZIP/rels)  |    | (theme)     |    | (layout/master)   |
++-------------+    +-------------+    +-------------------+
+    |                                      |
+    v                                      v
++-------------+    +-------------+    +-------------------+
+| background  |    | text-parser | -> | shape-parsers     |
+| (bg/effects)|    | (paragraphs)|    | (sp/pic/grp/gf)   |
++-------------+    +-------------+    +-------------------+
+    |                                      |
+    v                                      v
++---------------------------------------------------------+
+|                      pptx-parser.js                     |
+|        (orchestrates all parsing and builds slides[])  |
++---------------------------------------------------------+
+    |
+    v
++---------------------------------------------------------+
+|                    slide-renderer.js                    |
+|          (renders slides to Babylon.js GUI canvas)      |
++---------------------------------------------------------+
 ```
 
-### 共有状態 (`app` オブジェクト)
+### Shared State (app object)
 
-`index.js`で作成され、レンダリング系モジュールに渡されます：
+Created in index.js and passed to renderer-related modules:
 
 ```javascript
 var app = {
-    scene: scene,           // Babylon.jsシーン
-    gui: { ... },           // GUIコントロール参照
-    slides: [],             // パース済みスライドデータ
-    currentSlide: 0,        // 現在表示中のスライドインデックス
-    thumbRects: []          // サムネイル矩形（選択状態更新用）
+    scene: scene,
+    gui: { ... },
+    slides: [],
+    currentSlide: 0,
+    thumbRects: []
 };
 ```
 
-### スライドデータモデル
+### Slide Data Model
 
-各スライドは以下の構造を持ちます：
+Each slide has the following structure:
 
 ```javascript
 {
-    bg: "#FFFFFF",              // 背景色
-    bgImage: "data:image/...", // 背景画像（dataURL or null）
-    bgTint: {                   // 背景効果（null or object）
+    bg: "#FFFFFF",
+    bgImage: "data:image/...", // or null
+    bgTint: {
         type: "artEffect",      // "duotone" | "artEffect" | "tint" | "alpha"
-        color: "#0E5580"        // ティント色
+        color: "#0E5580"
     },
-    elements: [                 // スライド上の要素配列
+    elements: [
         { type: "text", text: "...", x: 0.1, y: 0.2, w: 0.8, fontSize: 24, color: "#FFF", ... },
         { type: "shape", shape: "rect", x: 0.0, y: 0.0, w: 0.5, h: 0.5, fillColor: "#ACD433", ... },
-        { type: "image", dataUrl: "data:...", x: 0.5, y: 0.0, w: 0.5, h: 1.0, ... },
+        { type: "image", dataUrl: "data:...", x: 0.5, y: 0.0, w: 0.5, h: 1.0, ... }
     ],
     notes: "Slide 1"
 }
 ```
 
-座標系: `x`, `y`, `w`, `h` はすべて0.0〜1.0の小数（スライドサイズに対する割合）。
+Coordinate system: x, y, w, h are normalized ratios in the range [0.0, 1.0] relative to slide size.
 
-### 要素スキーマ (Issue 04)
+### Element Schema (Issue 04)
 
-すべての要素は `normalizeElement()` で正規化され、以下のスキーマに準拠します：
+All elements are normalized by normalizeElement() and follow this schema.
 
-#### 共通プロパティ（すべての要素）
+#### Common Properties (all elements)
 
-| プロパティ | 型 | デフォルト | 説明 |
-|-----------|-----|----------|------|
-| `type` | string | "shape" | "text" \| "shape" \| "image" \| "table" |
-| `x` | number | 0 | 左端座標（0.0-1.0） |
-| `y` | number | 0 | 上端座標（0.0-1.0） |
-| `rotation` | number | 0 | 回転角度（度） |
+| Property | Type | Default | Description |
+|---|---|---|---|
+| type | string | "shape" | "text" | "shape" | "image" | "table" |
+| x | number | 0 | Left position (0.0-1.0) |
+| y | number | 0 | Top position (0.0-1.0) |
+| rotation | number | 0 | Rotation in degrees |
 
-#### テキスト要素 (`type: "text"`)
+#### Text Element (type: "text")
 
-| プロパティ | 型 | デフォルト | 説明 |
-|-----------|-----|----------|------|
-| `text` | string | "" | テキスト内容 |
-| `w` | number | 1 | 幅（0.0-1.0） |
-| `fontSize` | number | 12 | ポイント |
-| `color` | string | "#000000" | 16進カラーコード |
-| `fontWeight` | string | "normal" | "normal" \| "bold" |
-| `fontStyle` | string | "normal" | "normal" \| "italic" |
-| `fontFamily` | string | "Calibri" | フォント名 |
-| `align` | string | "left" | "left" \| "center" \| "right" |
+| Property | Type | Default | Description |
+|---|---|---|---|
+| text | string | "" | Text content |
+| w | number | 1 | Width (0.0-1.0) |
+| fontSize | number | 12 | Point size |
+| color | string | "#000000" | Hex color |
+| fontWeight | string | "normal" | "normal" or "bold" |
+| fontStyle | string | "normal" | "normal" or "italic" |
+| fontFamily | string | "Calibri" | Font family |
+| align | string | "left" | "left" | "center" | "right" |
 
-#### 図形要素 (`type: "shape"`)
+#### Shape Element (type: "shape")
 
-| プロパティ | 型 | デフォルト | 説明 |
-|-----------|-----|----------|------|
-| `shape` | string | "rect" | "rect" \| "ellipse" \| "line" \| "circle" 等 |
-| `w` | number | 1 | 幅（0.0-1.0） |
-| `h` | number | 1 | 高さ（0.0-1.0） |
-| `fillColor` | string | "#FFFFFF" | 塗りつぶし色 |
-| `strokeColor` | string | "#000000" | 枠線色 |
-| `thickness` | number | 1 | 線の太さ（ピクセル） |
-| `x1`, `y1`, `x2`, `y2` | number | — | 線用：始点・終点座標（line shapeのみ） |
+| Property | Type | Default | Description |
+|---|---|---|---|
+| shape | string | "rect" | "rect" | "ellipse" | "line" | "circle" etc. |
+| w | number | 1 | Width (0.0-1.0) |
+| h | number | 1 | Height (0.0-1.0) |
+| fillColor | string | "#FFFFFF" | Fill color |
+| strokeColor | string | "#000000" | Stroke color |
+| thickness | number | 1 | Stroke width (pixels) |
+| x1, y1, x2, y2 | number | - | Line endpoints (line shape only) |
 
-#### 画像要素 (`type: "image"`)
+#### Image Element (type: "image")
 
-| プロパティ | 型 | デフォルト | 説明 |
-|-----------|-----|----------|------|
-| `dataUrl` | string | null | 画像dataURL |
-| `w` | number | 1 | 幅（0.0-1.0） |
-| `h` | number | 1 | 高さ（0.0-1.0） |
-| `crop` | object | — | `{l, t, r, b}` クロップ値（0.0-1.0） |
+| Property | Type | Default | Description |
+|---|---|---|---|
+| dataUrl | string | null | Image data URL |
+| w | number | 1 | Width (0.0-1.0) |
+| h | number | 1 | Height (0.0-1.0) |
+| crop | object | - | {l, t, r, b} crop ratios (0.0-1.0) |
 
-#### テーブル要素 (`type: "table"`)
+#### Table Element (type: "table")
 
-| プロパティ | 型 | デフォルト | 説明 |
-|-----------|-----|----------|------|
-| `rows` | number | 0 | 行数 |
-| `cols` | number | 0 | 列数 |
-| `tableData` | array | [] | セルデータ配列 |
+| Property | Type | Default | Description |
+|---|---|---|---|
+| rows | number | 0 | Row count |
+| cols | number | 0 | Column count |
+| tableData | array | [] | Cell data |
 
-**正規化の利点**:
-- すべての要素が保証されたプロパティセットを持つため、レンダリング時に undefined チェックが不要
-- パーサーはこの関数を使用して一貫性を確保
-- 新しい要素タイプやプロパティの追加時も DEFAULT_ELEMENT_SCHEMA を更新するだけで完結
+Benefits of normalization:
+- Every element has guaranteed properties, reducing undefined checks in render paths.
+- Parser output stays consistent across shape types.
+- New element types/properties can be added by updating a single schema.
 
-## 対応状況
+## Feature Support
 
-### OOXML要素
+### OOXML Elements
 
-| 要素 | 状態 | 備考 |
-|------|------|------|
-| `p:sp` (シェイプ) | ✅ | rect, ellipse, roundRect等 |
-| `p:pic` (画像) | ✅ | srcRectクロップ対応 |
-| `p:cxnSp` (コネクタ) | ✅ | flipH/flipV対応 |
-| `p:grpSp` (グループ) | ✅ | 再帰的ネスト対応 |
-| `p:graphicFrame` (表) | ⚠️ | 基本的なテーブルのみ |
-| `p:graphicFrame` (チャート) | ⚠️ | プレースホルダー表示 |
-| `p:graphicFrame` (ダイアグラム) | ⚠️ | プレースホルダー表示 |
-| SmartArt | ❌ | 未対応 |
-| アニメーション | ❌ | 未対応 |
+| Element | Status | Notes |
+|---|---|---|
+| p:sp (shape) | Yes | rect, ellipse, roundRect, etc. |
+| p:pic (image) | Yes | srcRect crop supported |
+| p:cxnSp (connector) | Yes | flipH/flipV supported |
+| p:grpSp (group) | Yes | recursive nested groups supported |
+| p:graphicFrame (table) | Partial | basic table rendering |
+| p:graphicFrame (chart) | Partial | placeholder rendering |
+| p:graphicFrame (diagram) | Partial | placeholder rendering |
+| SmartArt | No | not supported yet |
+| Animation | No | not supported yet |
 
-### テキスト
+### Text
 
-| 機能 | 状態 | 備考 |
-|------|------|------|
-| フォントサイズ | ✅ | 0.75倍スケーリング |
-| 太字/斜体 | ✅ | |
-| 色（solidFill, schemeClr） | ✅ | shade/tint/lumMod修飾子対応 |
-| アライメント | ✅ | left/center/right |
-| 箇条書き（buChar） | ✅ | |
-| 大文字変換（cap="all"） | ✅ | レイアウト継承対応 |
-| CJK文字折り返し | ✅ | ゼロ幅スペース挿入 |
-| 行間 | ⚠️ | 近似値 |
+| Feature | Status | Notes |
+|---|---|---|
+| Font size | Yes | rendered with 0.75 scale |
+| Bold/italic | Yes |  |
+| Color (solidFill, schemeClr) | Yes | shade/tint/lumMod modifiers supported |
+| Alignment | Yes | left/center/right |
+| Bullets (buChar) | Yes |  |
+| Capitalization (cap="all") | Yes | layout inheritance supported |
+| CJK wrapping | Yes | zero-width spaces inserted |
+| Line spacing | Partial | approximate |
 
-### 背景
+### Background
 
-| 機能 | 状態 | 備考 |
-|------|------|------|
-| 単色背景 | ✅ | |
-| 画像背景 | ✅ | |
-| グラデーション | ⚠️ | 最初の色で近似 |
-| デュオトーン | ✅ | グレースケール検出→dk2ティント |
-| アート効果 | ⚠️ | dk2色でオーバーレイ近似 |
-| 背景継承（slide→layout→master） | ✅ | |
+| Feature | Status | Notes |
+|---|---|---|
+| Solid background | Yes |  |
+| Image background | Yes |  |
+| Gradient | Partial | approximated by first gradient stop |
+| Duotone | Yes | grayscale detection + dk2 tint |
+| Art effect | Partial | approximated by dk2 overlay |
+| Background inheritance (slide->layout->master) | Yes |  |
 
-### スタイル継承
+### Style Inheritance
 
-| レイヤー | 状態 | 備考 |
-|----------|------|------|
-| スライド自身のスタイル | ✅ | |
-| レイアウトプレースホルダー | ✅ | cap, anchor, fontSize, color, fontRef |
-| マスターtxStyles | ✅ | titleStyle, bodyStyle（非bgImageスライドのみ） |
-| マスタープレースホルダーfontRef | ✅ | |
-| テーマ色（dk1〜accent6） | ✅ | |
+| Layer | Status | Notes |
+|---|---|---|
+| Slide-local style | Yes |  |
+| Layout placeholders | Yes | cap, anchor, fontSize, color, fontRef |
+| Master txStyles | Yes | titleStyle, bodyStyle (non-bg-image slides) |
+| Master placeholder fontRef | Yes |  |
+| Theme colors (dk1-accent6) | Yes |  |
 
-## 開発ガイド
+## Development Guide
 
-### モジュールの修正
+### Editing Modules
 
-各ファイルは単一責務を持ちます。修正する際の指針：
+Each file has a single responsibility. Typical extension points:
+- Add a new shape type: extend parseShapeTree in shape-parsers.js.
+- Add text formatting support: extend parseParagraphs in text-parser.js.
+- Add inheritance rule: extend style-inheritance.js.
+- Add chart/SmartArt support: extend parseGraphicFrame in shape-parsers.js.
+- Improve rendering: adjust renderSlide in slide-renderer.js.
+- Update UI frame: edit gui-frame.js.
 
-- **新しいシェイプタイプを追加**: `shape-parsers.js` の `parseShapeTree` に分岐追加
-- **テキスト書式を追加**: `text-parser.js` の `parseParagraphs` に属性読み取り追加
-- **新しいスタイル継承**: `style-inheritance.js` に読み取りロジック追加
-- **チャート/SmartArt対応**: `shape-parsers.js` の `parseGraphicFrame` を拡張
-- **描画改善**: `slide-renderer.js` の `renderSlide` を修正
-- **UI変更**: `gui-frame.js` を修正
+### Using Babylon.js Playground v2
 
-### Playground での使用
+Playground v2 supports:
+- Multi-file tabs (VS Code-like layout)
+- Native ES Modules import/export handling
+- NPM package integration
+- TypeScript IntelliSense (auto type acquisition)
+- Chrome DevTools debugging
+- Separate shader files (.wgsl/.glsl)
 
-Babylon.js Playground v2 は以下の機能をサポートしています：
+Add each .js file as a tab and run index.js as the entry point.
+For local development, open index.html with Live Server.
 
-- **複数ファイル** — VS Code スタイルのタブで各モジュールを別ファイルとして追加可能
-- **ES Modules** — `import` / `export` をそのままブラウザ実行可能なモジュールに変換
-- **NPM モジュール統合** — `jszip` などの外部ライブラリを直接インポート可能
-- **TypeScript IntelliSense** — 自動型取得による補完・定義ジャンプ
-- **Chrome DevTools** — ブレークポイント・ステップ実行などの高度なデバッグ
-- **シェーダーサポート** — `.wgsl` / `.glsl` を別ファイルで管理
+### Debugging
 
-各 `.js` ファイルを Playground のタブに追加し、エントリポイントとして `index.js` を実行してください。ローカル開発は Live Server で `index.html` を開いて確認できます。
+Use console log prefixes to locate issues quickly:
 
-### デバッグ
+| Prefix | File | Purpose |
+|---|---|---|
+| [PPTX] | pptx-parser.js | parsing orchestration |
+| [BG] | background.js | background extraction |
+| [BLIP] | background.js | duotone/art-effect handling |
+| [TREE] | shape-parsers.js | shape tree traversal |
+| [SP] | shape-parsers.js | shape parsing |
+| [PIC] | shape-parsers.js | image parsing |
+| [GF] | shape-parsers.js | graphicFrame parsing |
+| [LAYOUT] | style-inheritance.js | layout style inheritance |
+| [MASTER] | style-inheritance.js | master style inheritance |
+| [RENDER] | slide-renderer.js | rendering process |
 
-コンソールログのプレフィックスで問題箇所を特定：
+## Known Limitations
 
-| プレフィックス | ファイル | 内容 |
-|---------------|----------|------|
-| `[PPTX]` | pptx-parser.js | 全体オーケストレーション |
-| `[BG]` | background.js | 背景抽出 |
-| `[BLIP]` | background.js | デュオトーン/アート効果 |
-| `[TREE]` | shape-parsers.js | シェイプツリー走査 |
-| `[SP]` | shape-parsers.js | 個別シェイプ解析 |
-| `[PIC]` | shape-parsers.js | 画像要素 |
-| `[GF]` | shape-parsers.js | graphicFrame |
-| `[LAYOUT]` | style-inheritance.js | レイアウトスタイル |
-| `[MASTER]` | style-inheritance.js | マスタースタイル |
-| `[RENDER]` | slide-renderer.js | 描画処理 |
+1. Background art effects: full parity with PowerPoint pixel processing is difficult in WebGL. The current implementation approximates with a dk2 color overlay.
+2. Charts: OOXML chart rendering is not implemented yet; placeholder boxes are shown.
+3. SmartArt: dsp:drawing diagram parsing is not implemented yet.
+4. Animation: slide animations and transitions are not implemented.
+5. Font size: Babylon.js GUI constraints require 75% font scaling.
+6. Embedded fonts: custom embedded fonts are not supported; fallbacks such as Segoe UI/Calibri are used.
 
-## 既知の制限事項
+## Troubleshooting
 
-1. **背景アート効果**: PowerPointのアート効果（ぼかし、エッチング等）はピクセルレベル処理のためWebGLでの完全再現は困難。dk2色のオーバーレイで近似。
-2. **チャート**: OOXMLチャートの描画は未実装。プレースホルダーボックスを表示。
-3. **SmartArt**: ダイアグラム描画XML(`dsp:drawing`)の解析は未実装。
-4. **アニメーション**: スライドアニメーション/トランジションは未対応。
-5. **フォントサイズ**: Babylon.js GUIの制約により、元のサイズの75%でレンダリング。
-6. **埋め込みフォント**: カスタムフォントは未対応。Segoe UI/Calibriにフォールバック。
+### Live Server startup failures
 
-## トラブルシューティング
+#### Error: "renderCanvas not found"
 
-### Live Server で起動失敗
+Cause:
+- The canvas element is referenced before DOM is fully ready.
 
-#### ❌ "renderCanvas not found" / キャンバスが見つからない
+Fix:
+1. Hard reload the page (Ctrl+Shift+R).
+2. Check Live Server delayed-load settings.
+3. Ensure script type="module" src="index.js" is placed at the end of body.
 
-**原因**: `index.html` の `<canvas id="renderCanvas">` が読み込み前に参照されている。
+#### Error: "Failed to load file library"
 
-**対処**:
-1. ページを完全リロード（Ctrl+Shift+R / Cmd+Shift+R）
-2. Live Server の設定でディレイ読み込みを確認
-3. `index.html` の `<script type="module" src="index.js"></script>` が `<body>` の最後にあるか確認
+Cause:
+- libs/jszip.min.js is missing or corrupted.
 
-#### ❌ "Failed to load file library" / JSZip ロード失敗
+Fix:
+1. Verify libs/jszip.min.js exists.
+2. Check browser console for jszip load errors.
+3. If corrupted, redownload jszip 3.10.1 from:
+   https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js
 
-**原因**: `libs/jszip.min.js` が見つからない、またはファイルが破損している。
+#### Error: "Failed to initialize graphics engine"
 
-**対処**:
-1. `libs/jszip.min.js` が存在するか確認
-2. ブラウザコンソール（F12）で `libs/jszip.min.js` の読み込みエラーを確認
-3. ファイルが破損している場合は [jszip 3.10.1](https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js) を再ダウンロードして `libs/` に配置
+Cause:
+- WebGL is disabled or GPU/driver support is unavailable.
 
-#### ❌ "Failed to initialize graphics engine" / グラフィックスエンジン初期化失敗
+Fix:
+1. Enable hardware acceleration in browser settings.
+2. Update GPU drivers.
+3. Try another browser (Chrome/Firefox/Edge).
+4. Try private/incognito mode to rule out extension conflicts.
 
-**原因**: WebGL が無効、またはGPU/ドライバの非対応。
+### PPTX loading failure
 
-**対処**:
-1. `about:gpu` (Chrome) または `about:preferences#advanced` (Firefox) でハードウェアアクセラレーション有効化
-2. グラフィックスドライバを最新版に更新
-3. 別のブラウザで試す（Chrome, Firefox, Edge）
-4. シークレット/プライベートウィンドウで試す（拡張機能との競合を排除）
+#### Error: "PPTX parse error"
 
-### PPTX 読み込み失敗
+Cause:
+- File is corrupted or unsupported content is present.
 
-#### ❌ "PPTX parse error" / ファイル解析エラー
+Fix:
+1. Verify file is a valid .pptx (ZIP-based package).
+2. Open in PowerPoint and save again to repair.
+3. Test with another .pptx.
+4. For very large files, check memory pressure during data URL generation.
 
-**原因**: ファイルが破損している、またはサポート外の形式。
+### Check phased initialization logs in console
 
-**対処**:
-1. ファイルが有効な .pptx ファイルか確認（ZIP形式で圧縮されている）
-2. PowerPoint で一度開いて上書き保存し、修復
-3. 別の .pptx ファイルで試す
-4. データURL生成時のメモリ不足は大容量ファイルの場合あり
+Example successful sequence:
 
-### コンソールで段階別エラー情報を確認
-
-ブラウザコンソール（F12 → Console タブ）で以下の形式のログを確認できます：
-
-```
+```text
 [INIT] boot sequence start
 [INIT/ENGINE] starting
 [INIT/ENGINE] done
@@ -319,15 +324,15 @@ Babylon.js Playground v2 は以下の機能をサポートしています：
 [INIT] boot sequence complete
 ```
 
-エラーが発生した場合：
-- `[INIT] failed` と表示される
-- `error code:` でエラー分類を確認
-- `dev message:` で詳細情報を確認
+On failure:
+- [INIT] failed appears
+- error code shows category
+- dev message includes detailed diagnostics
 
-### 既知の環境別問題
+### Environment-specific known issues
 
-| 環境 | 症状 | 原因 | 対処 |
-|------|------|------|------|
-| Windows Safari | グラフィックスが表示されない | WebGL2未対応 | Chrome/Edge を使用 |
-| iPad/iPhone | タッチで図形選択不可 | モバイルタッチイベント未対応 | テスト用にはPCブラウザを使用 |
-| VPN/プロキシ | Babylon.js CDN読み込み失敗 | ホワイトリスト未設定 | IT部門に `cdn.babylonjs.com` をホワイトリスト登録依頼（JSZipはローカル動作） |
+| Environment | Symptom | Cause | Mitigation |
+|---|---|---|---|
+| Windows Safari | graphics not displayed | no WebGL2 support | use Chrome or Edge |
+| iPad/iPhone | touch shape interactions are limited | mobile touch behavior not fully implemented | use desktop browser for testing |
+| VPN/proxy | Babylon.js CDN load fails | whitelist not configured | request whitelist for cdn.babylonjs.com |
