@@ -47,18 +47,51 @@ var createDefaultEngine = function () { return new BABYLON.Engine(canvas, true, 
 
 async function ensureJsZipLoaded() {
     return await new Promise(function (resolve, reject) {
-        if (window.JSZip && (typeof window.JSZip.loadAsync === "function" ||
-            (window.JSZip.prototype && typeof window.JSZip.prototype.loadAsync === "function"))) {
-            resolve(); return;
+        // Check if JSZip is already loaded and has loadAsync method
+        if (window.JSZip && typeof window.JSZip === "function") {
+            try {
+                // Verify that JSZip.loadAsync exists on the instance
+                var testZip = new window.JSZip();
+                if (typeof testZip.loadAsync === "function") {
+                    console.log("[INIT/JSZIP] JSZip already loaded");
+                    resolve();
+                    return;
+                }
+            } catch (e) {
+                console.warn("[INIT/JSZIP] JSZip loaded but test failed", e);
+            }
         }
+        
+        console.log("[INIT/JSZIP] Loading from ./libs/jszip.min.js");
         var s = document.createElement("script");
-        s.src = "https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js";
-        s.onload = resolve;
+        s.src = "./libs/jszip.min.js";
+        s.onload = function() {
+            try {
+                if (!window.JSZip) {
+                    throw new Error("JSZip not found in window after load");
+                }
+                if (typeof window.JSZip !== "function") {
+                    throw new Error("JSZip is not a constructor: " + typeof window.JSZip);
+                }
+                var testZip = new window.JSZip();
+                if (typeof testZip.loadAsync !== "function") {
+                    throw new Error("loadAsync is not a function. JSZip version may be incompatible.");
+                }
+                console.log("[INIT/JSZIP] JSZip loaded successfully");
+                resolve();
+            } catch (e) {
+                reject(new AppError(
+                    'JSZIP_LOAD_FAIL',
+                    'File library loaded but is incompatible. Try clearing browser cache.',
+                    'JSZip validation failed: ' + (e.message || e)
+                ));
+            }
+        };
         s.onerror = function() {
             reject(new AppError(
                 'JSZIP_LOAD_FAIL',
-                'Failed to load file library. Check your internet connection.',
-                'JSZip CDN load failed'
+                'Failed to load file library. Check that libs/jszip.min.js exists.',
+                'JSZip local file (libs/jszip.min.js) load failed'
             ));
         };
         document.head.appendChild(s);
