@@ -61,6 +61,42 @@ function createChevronDataUrl(widthPx, heightPx, fillColor, strokeColor, strokeW
     return canvas.toDataURL("image/png");
 }
 
+function normalizeDeg(value) {
+    var d = Number(value);
+    if (!Number.isFinite(d)) return 0;
+    while (d < 0) d += 360;
+    while (d >= 360) d -= 360;
+    return d;
+}
+
+function createPieDataUrl(widthPx, heightPx, fillColor, startDeg, endDeg) {
+    var w = Math.max(8, Math.round(widthPx));
+    var h = Math.max(8, Math.round(heightPx));
+    var canvas = document.createElement("canvas");
+    canvas.width = w;
+    canvas.height = h;
+    var ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+
+    var cx = w / 2;
+    var cy = h / 2;
+    var rx = w / 2;
+    var ry = h / 2;
+    var s = normalizeDeg(startDeg || 0);
+    var e = normalizeDeg(endDeg || 360);
+    if (e <= s) e += 360;
+
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    // OOXML pie angles use 0° at the right, increasing clockwise.
+    ctx.ellipse(cx, cy, rx, ry, 0, s * Math.PI / 180, e * Math.PI / 180);
+    ctx.closePath();
+    ctx.fillStyle = fillColor || "#5B7FC5";
+    ctx.fill();
+
+    return canvas.toDataURL("image/png");
+}
+
 // Render a single text element into a GUI container
 function renderTextElement(el, container, canvasW, canvasH, fontScale) {
     var tb = new BABYLON.GUI.TextBlock();
@@ -132,17 +168,34 @@ export function renderSlide(app) {
                 le.top = ((y1 + y2) / 2 - CANVAS_H / 2) + "px";
                 le.rotation = ang; sLayer.addControl(le);
             } else if (ELLIPSE_SHAPES.indexOf(el.shape) >= 0) {
-                var ellStrokeW = el.thickness !== undefined ? el.thickness : (el.borderWidth || 0);
-                var ellStrokeColor = el.strokeColor || el.borderColor || "transparent";
-                var ell = new BABYLON.GUI.Ellipse();
-                ell.left = (el.x * CANVAS_W) + "px"; ell.top = (el.y * CANVAS_H) + "px";
-                ell.width = (el.w * CANVAS_W) + "px"; ell.height = (el.h * CANVAS_H) + "px";
-                ell.background = el.fillColor || "transparent";
-                ell.thickness = ellStrokeW; ell.color = ellStrokeColor;
-                ell.horizontalAlignment = BABYLON.GUI.Control.HORIZONTAL_ALIGNMENT_LEFT;
-                ell.verticalAlignment = BABYLON.GUI.Control.VERTICAL_ALIGNMENT_TOP;
-                if (el.rotation) ell.rotation = el.rotation * Math.PI / 180;
-                sLayer.addControl(ell);
+                if (el.shape === "pie" && Number.isFinite(el.pieStart) && Number.isFinite(el.pieEnd)) {
+                    var pie = new BABYLON.GUI.Rectangle();
+                    pie.left = (el.x * CANVAS_W) + "px"; pie.top = (el.y * CANVAS_H) + "px";
+                    pie.width = (el.w * CANVAS_W) + "px"; pie.height = (el.h * CANVAS_H) + "px";
+                    pie.thickness = 0; pie.background = "transparent";
+                    pie.horizontalAlignment = BABYLON.GUI.Control.HORIZONTAL_ALIGNMENT_LEFT;
+                    pie.verticalAlignment = BABYLON.GUI.Control.VERTICAL_ALIGNMENT_TOP;
+                    if (el.rotation) pie.rotation = el.rotation * Math.PI / 180;
+                    var pieData = createPieDataUrl(el.w * CANVAS_W, el.h * CANVAS_H, el.fillColor || "#5B7FC5", el.pieStart, el.pieEnd);
+                    if (pieData) {
+                        var pieImg = new BABYLON.GUI.Image("pie_" + Math.random(), pieData);
+                        pieImg.stretch = BABYLON.GUI.Image.STRETCH_FILL;
+                        pie.addControl(pieImg);
+                    }
+                    sLayer.addControl(pie);
+                } else {
+                    var ellStrokeW = el.thickness !== undefined ? el.thickness : (el.borderWidth || 0);
+                    var ellStrokeColor = el.strokeColor || el.borderColor || "transparent";
+                    var ell = new BABYLON.GUI.Ellipse();
+                    ell.left = (el.x * CANVAS_W) + "px"; ell.top = (el.y * CANVAS_H) + "px";
+                    ell.width = (el.w * CANVAS_W) + "px"; ell.height = (el.h * CANVAS_H) + "px";
+                    ell.background = el.fillColor || "transparent";
+                    ell.thickness = ellStrokeW; ell.color = ellStrokeColor;
+                    ell.horizontalAlignment = BABYLON.GUI.Control.HORIZONTAL_ALIGNMENT_LEFT;
+                    ell.verticalAlignment = BABYLON.GUI.Control.VERTICAL_ALIGNMENT_TOP;
+                    if (el.rotation) ell.rotation = el.rotation * Math.PI / 180;
+                    sLayer.addControl(ell);
+                }
             } else if (el.shape === "chevron") {
                 var cheStrokeW = el.thickness !== undefined ? el.thickness : (el.borderWidth || 0);
                 var cheStrokeColor = el.strokeColor || el.borderColor || "transparent";
@@ -225,15 +278,32 @@ export function buildThumbnails(app) {
         slide.elements.forEach(function (el) {
             if (el.type === "shape" && el.shape !== "line" && el.fillColor && el.fillColor !== "transparent") {
                 if (ELLIPSE_SHAPES.indexOf(el.shape) >= 0) {
-                    var se = new BABYLON.GUI.Ellipse();
-                    se.width = (el.w * TW) + "px"; se.height = (el.h * TH) + "px";
-                    se.left = (el.x * TW) + "px"; se.top = (el.y * TH) + "px";
-                    se.background = el.fillColor;
-                    se.thickness = 0;
-                    se.horizontalAlignment = BABYLON.GUI.Control.HORIZONTAL_ALIGNMENT_LEFT;
-                    se.verticalAlignment = BABYLON.GUI.Control.VERTICAL_ALIGNMENT_TOP;
-                    if (el.rotation) se.rotation = el.rotation * Math.PI / 180;
-                    th.addControl(se);
+                    if (el.shape === "pie" && Number.isFinite(el.pieStart) && Number.isFinite(el.pieEnd)) {
+                        var pieRect = new BABYLON.GUI.Rectangle();
+                        pieRect.width = (el.w * TW) + "px"; pieRect.height = (el.h * TH) + "px";
+                        pieRect.left = (el.x * TW) + "px"; pieRect.top = (el.y * TH) + "px";
+                        pieRect.thickness = 0; pieRect.background = "transparent";
+                        pieRect.horizontalAlignment = BABYLON.GUI.Control.HORIZONTAL_ALIGNMENT_LEFT;
+                        pieRect.verticalAlignment = BABYLON.GUI.Control.VERTICAL_ALIGNMENT_TOP;
+                        if (el.rotation) pieRect.rotation = el.rotation * Math.PI / 180;
+                        var pieDataThumb = createPieDataUrl(el.w * TW, el.h * TH, el.fillColor || "#5B7FC5", el.pieStart, el.pieEnd);
+                        if (pieDataThumb) {
+                            var pieImgThumb = new BABYLON.GUI.Image("th_pie_" + idx + "_" + Math.random().toString(36).substr(2, 4), pieDataThumb);
+                            pieImgThumb.stretch = BABYLON.GUI.Image.STRETCH_FILL;
+                            pieRect.addControl(pieImgThumb);
+                        }
+                        th.addControl(pieRect);
+                    } else {
+                        var se = new BABYLON.GUI.Ellipse();
+                        se.width = (el.w * TW) + "px"; se.height = (el.h * TH) + "px";
+                        se.left = (el.x * TW) + "px"; se.top = (el.y * TH) + "px";
+                        se.background = el.fillColor;
+                        se.thickness = 0;
+                        se.horizontalAlignment = BABYLON.GUI.Control.HORIZONTAL_ALIGNMENT_LEFT;
+                        se.verticalAlignment = BABYLON.GUI.Control.VERTICAL_ALIGNMENT_TOP;
+                        if (el.rotation) se.rotation = el.rotation * Math.PI / 180;
+                        th.addControl(se);
+                    }
                 } else if (el.shape === "chevron") {
                     var cheDataThumb = createChevronDataUrl(el.w * TW, el.h * TH, el.fillColor || "transparent", "transparent", 0);
                     if (cheDataThumb) {
