@@ -90,20 +90,29 @@ export function parseParagraphs(txBody, defaultFS, defaultFC, layoutCap) {
         }
 
         var align = "left";
+        var level = 0;
         if (pPr) {
             var al = pPr.getAttribute("algn");
             if (al === "ctr") align = "center"; else if (al === "r") align = "right";
+            var lvl = pPr.getAttribute("lvl");
+            if (lvl !== null) {
+                var parsedLevel = parseInt(lvl, 10);
+                if (!isNaN(parsedLevel)) level = Math.max(0, parsedLevel);
+            }
         }
         if (pPr) {
             var bc = pPr.getElementsByTagNameNS(A_NS, "buChar")[0];
             if (bc && txt.trim()) txt = (bc.getAttribute("char") || "•") + " " + txt;
         }
-        var lnSpc = 1.5;
+        var lnSpc = 1.0;
         if (pPr) {
             var ls = pPr.getElementsByTagNameNS(A_NS, "lnSpc")[0];
             if (ls) {
                 var spcPct = ls.getElementsByTagNameNS(A_NS, "spcPct")[0];
-                if (spcPct) { var v = parseInt(spcPct.getAttribute("val")) || 100000; lnSpc = v / 100000 * 1.5; }
+                if (spcPct) {
+                    var v = parseInt(spcPct.getAttribute("val")) || 100000;
+                    lnSpc = Math.max(0.8, Math.min(2.0, v / 100000));
+                }
             }
         }
 
@@ -112,7 +121,7 @@ export function parseParagraphs(txBody, defaultFS, defaultFC, layoutCap) {
         result.push({
             text: txt, fontSize: Math.min(Math.max(fs, 6), 60),
             fontWeight: fw, color: fc, italic: fi, align: align,
-            isEmpty: txt.trim().length === 0, lineSpacing: lnSpc
+            isEmpty: txt.trim().length === 0, lineSpacing: lnSpc, level: level
         });
     }
     return result;
