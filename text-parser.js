@@ -50,7 +50,7 @@ export function parseParagraphs(txBody, defaultFS, defaultFC, layoutCap) {
     var result = [], paras = txBody.getElementsByTagNameNS(A_NS, "p");
     var autoNumCounters = {}; // Track per-level auto-numbering
     for (var p = 0; p < paras.length; p++) {
-        var para = paras[p], runs = para.getElementsByTagNameNS(A_NS, "r");
+        var para = paras[p];
         var fs = defaultFS, fw = "normal", fc = defaultFC, fi = false, cap = layoutCap;
 
         var pPr = para.getElementsByTagNameNS(A_NS, "pPr")[0];
@@ -84,19 +84,27 @@ export function parseParagraphs(txBody, defaultFS, defaultFC, layoutCap) {
         }
 
         var txt = "";
-        for (var r = 0; r < runs.length; r++) {
-            var rPr = runs[r].getElementsByTagNameNS(A_NS, "rPr")[0];
-            if (rPr) {
-                var rsz = rPr.getAttribute("sz");
-                if (rsz) { var rfs = emuToFontPx(parseInt(rsz)); if (rfs > fs) fs = rfs; }
-                if (rPr.getAttribute("b") === "1") fw = "bold";
-                if (rPr.getAttribute("i") === "1") fi = true;
-                if (rPr.getAttribute("cap") && !cap) cap = rPr.getAttribute("cap");
-                var rsf = rPr.getElementsByTagNameNS(A_NS, "solidFill")[0];
-                if (rsf) { var rc = resolveColor(rsf); if (rc) fc = rc; }
+        var lineBreakPositions = []; // text offsets where <a:br/> elements occurred
+        for (var ci = 0; ci < para.childNodes.length; ci++) {
+            var child = para.childNodes[ci];
+            if (child.nodeType !== 1) continue;
+            if (child.localName === "br" && child.namespaceURI === A_NS) {
+                // Explicit line break (Shift+Enter in PowerPoint) — record current offset
+                lineBreakPositions.push(txt.length);
+            } else if (child.localName === "r" && child.namespaceURI === A_NS) {
+                var rPr = child.getElementsByTagNameNS(A_NS, "rPr")[0];
+                if (rPr) {
+                    var rsz = rPr.getAttribute("sz");
+                    if (rsz) { var rfs = emuToFontPx(parseInt(rsz)); if (rfs > fs) fs = rfs; }
+                    if (rPr.getAttribute("b") === "1") fw = "bold";
+                    if (rPr.getAttribute("i") === "1") fi = true;
+                    if (rPr.getAttribute("cap") && !cap) cap = rPr.getAttribute("cap");
+                    var rsf = rPr.getElementsByTagNameNS(A_NS, "solidFill")[0];
+                    if (rsf) { var rc = resolveColor(rsf); if (rc) fc = rc; }
+                }
+                var t = child.getElementsByTagNameNS(A_NS, "t")[0];
+                if (t) txt += normalizeRunText(t.textContent);
             }
-            var t = runs[r].getElementsByTagNameNS(A_NS, "t")[0];
-            if (t) txt += normalizeRunText(t.textContent);
         }
 
         var align = "left";
@@ -184,12 +192,29 @@ export function parseParagraphs(txBody, defaultFS, defaultFC, layoutCap) {
         txt = normalizeRunText(txt);
         if (cap === "all" && txt) txt = txt.toUpperCase();
 
-        result.push({
-            text: txt, fontSize: Math.min(Math.max(fs, 6), 60),
-            fontWeight: fw, color: fc, italic: fi, align: align,
-            isEmpty: txt.trim().length === 0, lineSpacing: lnSpc, level: level,
-            spaceBefore: spaceBefore, spaceAfter: spaceAfter
-        });
+        // Split paragraph at <a:br/> positions into separate line entries
+        if (lineBreakPositions.length === 0) {
+            result.push({
+                text: txt, fontSize: Math.min(Math.max(fs, 6), 60),
+                fontWeight: fw, color: fc, italic: fi, align: align,
+                isEmpty: txt.trim().length === 0, lineSpacing: lnSpc, level: level,
+                spaceBefore: spaceBefore, spaceAfter: spaceAfter
+            });
+        } else {
+            var brParts = [];
+            var brPrev = 0;
+            lineBreakPositions.forEach(function(pos) { brParts.push(txt.slice(brPrev, pos)); brPrev = pos; });
+            brParts.push(txt.slice(brPrev));
+            brParts.forEach(function(partTxt, si) {
+                result.push({
+                    text: partTxt, fontSize: Math.min(Math.max(fs, 6), 60),
+                    fontWeight: fw, color: fc, italic: fi, align: align,
+                    isEmpty: partTxt.trim().length === 0, lineSpacing: lnSpc, level: level,
+                    spaceBefore: si === 0 ? spaceBefore : 0,
+                    spaceAfter: si === brParts.length - 1 ? spaceAfter : 0
+                });
+            });
+        }
     }
     return result;
 }
