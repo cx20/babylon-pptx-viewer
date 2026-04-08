@@ -121,6 +121,16 @@ function extractFillFromSpPr(spPr) {
     return null;
 }
 
+function getDirectChildByTagNameNS(parent, namespaceUri, localName) {
+    if (!parent) return null;
+    for (var i = 0; i < parent.childNodes.length; i++) {
+        var child = parent.childNodes[i];
+        if (child.nodeType !== 1) continue;
+        if (child.namespaceURI === namespaceUri && child.localName === localName) return child;
+    }
+    return null;
+}
+
 async function buildChartDataMap(zip, slideBasePath, relsAll) {
     var map = {};
     if (!relsAll) return map;
@@ -140,9 +150,9 @@ async function buildChartDataMap(zip, slideBasePath, relsAll) {
             // Chart/plot area fills (c:spPr with a:* fill children).
             var chartAreaFill = null;
             var plotAreaFill = null;
-            var chartSpPr = chart.getElementsByTagNameNS(C_NS, "spPr")[0];
+            var chartSpPr = getDirectChildByTagNameNS(chart, C_NS, "spPr");
             if (chartSpPr) chartAreaFill = extractFillFromSpPr(chartSpPr);
-            var plotSpPr = plotArea.getElementsByTagNameNS(C_NS, "spPr")[0];
+            var plotSpPr = getDirectChildByTagNameNS(plotArea, C_NS, "spPr");
             if (plotSpPr) plotAreaFill = extractFillFromSpPr(plotSpPr);
 
             var chartTypeNode =
@@ -411,21 +421,23 @@ async function parsePptx(arrayBuffer) {
                 masterTxStyles = await extractMasterTxStyles(zip, masterPathTx);
             }
         }
-        // Apply master txStyles as fallback fontRefColor for placeholders
-        // txStyles only for slides WITHOUT background images
-        if (!hasBgImage) {
-            if (masterTxStyles.bodyColor) {
-                if (!layoutStyles.subTitle) layoutStyles.subTitle = {};
-                if (!layoutStyles.subTitle.fontRefColor) layoutStyles.subTitle.fontRefColor = masterTxStyles.bodyColor;
-                if (!layoutStyles.body) layoutStyles.body = {};
-                if (!layoutStyles.body.fontRefColor) layoutStyles.body.fontRefColor = masterTxStyles.bodyColor;
-            }
-            if (masterTxStyles.titleColor) {
-                if (!layoutStyles.title) layoutStyles.title = {};
-                if (!layoutStyles.title.fontRefColor) layoutStyles.title.fontRefColor = masterTxStyles.titleColor;
-                if (!layoutStyles.ctrTitle) layoutStyles.ctrTitle = {};
-                if (!layoutStyles.ctrTitle.fontRefColor) layoutStyles.ctrTitle.fontRefColor = masterTxStyles.titleColor;
-            }
+        // Apply master txStyles as fallback fontRefColor for placeholders.
+        // Body/other text should still inherit master colors on bg-image slides.
+        if (masterTxStyles.bodyColor) {
+            if (!layoutStyles.subTitle) layoutStyles.subTitle = {};
+            if (!layoutStyles.subTitle.fontRefColor) layoutStyles.subTitle.fontRefColor = masterTxStyles.bodyColor;
+            if (!layoutStyles.body) layoutStyles.body = {};
+            if (!layoutStyles.body.fontRefColor) layoutStyles.body.fontRefColor = masterTxStyles.bodyColor;
+        }
+        if (masterTxStyles.otherColor) {
+            if (!layoutStyles[""]) layoutStyles[""] = {};
+            if (!layoutStyles[""].fontRefColor) layoutStyles[""].fontRefColor = masterTxStyles.otherColor;
+        }
+        if (!hasBgImage && masterTxStyles.titleColor) {
+            if (!layoutStyles.title) layoutStyles.title = {};
+            if (!layoutStyles.title.fontRefColor) layoutStyles.title.fontRefColor = masterTxStyles.titleColor;
+            if (!layoutStyles.ctrTitle) layoutStyles.ctrTitle = {};
+            if (!layoutStyles.ctrTitle.fontRefColor) layoutStyles.ctrTitle.fontRefColor = masterTxStyles.titleColor;
         }
         // Master placeholder fontRef colors generally apply to all slides.
         // On bg-image slides, title placeholders should not be forced to tx1-like dark colors.

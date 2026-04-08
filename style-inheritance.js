@@ -6,6 +6,41 @@ import { A_NS, P_NS } from "./constants.js";
 import { resolveColor } from "./color-utils.js";
 import { emuToFontPx } from "./text-parser.js";
 
+function extractTextColorFromRPr(rPr) {
+    if (!rPr) return null;
+
+    var solidFill = rPr.getElementsByTagNameNS(A_NS, "solidFill")[0];
+    if (solidFill) {
+        var fillColor = resolveColor(solidFill);
+        if (fillColor) return fillColor;
+    }
+
+    for (var i = 0; i < rPr.childNodes.length; i++) {
+        var child = rPr.childNodes[i];
+        if (child.nodeType !== 1) continue;
+        if (child.namespaceURI !== A_NS) continue;
+        if (child.localName === "schemeClr" || child.localName === "srgbClr" || child.localName === "scrgbClr" || child.localName === "prstClr") {
+            var directColor = resolveColor(child);
+            if (directColor) return directColor;
+        }
+    }
+
+    return null;
+}
+
+function extractStyleColor(styleEl) {
+    if (!styleEl) return null;
+    var candidates = ["lvl1pPr", "defPPr", "lvl2pPr", "lvl3pPr", "lvl4pPr", "lvl5pPr", "lvl6pPr", "lvl7pPr", "lvl8pPr", "lvl9pPr"];
+    for (var i = 0; i < candidates.length; i++) {
+        var pPr = styleEl.getElementsByTagNameNS(A_NS, candidates[i])[0];
+        if (!pPr) continue;
+        var defRPr = pPr.getElementsByTagNameNS(A_NS, "defRPr")[0];
+        var color = extractTextColorFromRPr(defRPr);
+        if (color) return color;
+    }
+    return null;
+}
+
 // Extract text styles from layout placeholder shapes
 export async function extractPlaceholderStyles(zip, layoutPath) {
     var styles = {};
@@ -52,8 +87,8 @@ export async function extractPlaceholderStyles(zip, layoutPath) {
                         var sz = dr.getAttribute("sz");
                         if (sz) style.fontSize = emuToFontPx(parseInt(sz));
                         if (dr.getAttribute("b") === "1") style.bold = true;
-                        var sf = dr.getElementsByTagNameNS(A_NS, "solidFill")[0];
-                        if (sf) { var c = resolveColor(sf); if (c) style.color = c; }
+                        var c = extractTextColorFromRPr(dr);
+                        if (c) style.color = c;
                     }
                 }
             }
@@ -66,8 +101,8 @@ export async function extractPlaceholderStyles(zip, layoutPath) {
                         if (dr.getAttribute("cap") && !style.cap) style.cap = dr.getAttribute("cap");
                         var sz = dr.getAttribute("sz");
                         if (sz && !style.fontSize) style.fontSize = emuToFontPx(parseInt(sz));
-                        var sf = dr.getElementsByTagNameNS(A_NS, "solidFill")[0];
-                        if (sf && !style.color) { var c = resolveColor(sf); if (c) style.color = c; }
+                        var c = extractTextColorFromRPr(dr);
+                        if (c && !style.color) style.color = c;
                     }
                 }
             }
@@ -104,22 +139,9 @@ export async function extractMasterTxStyles(zip, masterPath) {
 
     var txStyles = doc.getElementsByTagNameNS(P_NS, "txStyles")[0];
     if (txStyles) {
-        function extractStyleColor(styleName) {
-            var styleEl = txStyles.getElementsByTagNameNS(P_NS, styleName)[0];
-            if (!styleEl) return null;
-            var lvl1 = styleEl.getElementsByTagNameNS(A_NS, "lvl1pPr")[0];
-            if (lvl1) {
-                var dr = lvl1.getElementsByTagNameNS(A_NS, "defRPr")[0];
-                if (dr) {
-                    var sf = dr.getElementsByTagNameNS(A_NS, "solidFill")[0];
-                    if (sf) return resolveColor(sf);
-                }
-            }
-            return null;
-        }
-        result.titleColor = extractStyleColor("titleStyle");
-        result.bodyColor = extractStyleColor("bodyStyle");
-        result.otherColor = extractStyleColor("otherStyle");
+        result.titleColor = extractStyleColor(txStyles.getElementsByTagNameNS(P_NS, "titleStyle")[0]);
+        result.bodyColor = extractStyleColor(txStyles.getElementsByTagNameNS(P_NS, "bodyStyle")[0]);
+        result.otherColor = extractStyleColor(txStyles.getElementsByTagNameNS(P_NS, "otherStyle")[0]);
     }
 
     var cSld = doc.getElementsByTagNameNS(P_NS, "cSld")[0];

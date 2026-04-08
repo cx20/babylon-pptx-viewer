@@ -899,23 +899,23 @@ function renderBarChart(chartData, elements, fracX, fracY, fracW, fracH, defText
     var chartAreaFill = chartData.chartAreaFill;
     var plotAreaFill = chartData.plotAreaFill;
 
-    if (chartAreaFill !== "transparent") {
+    if (chartAreaFill && chartAreaFill !== "transparent") {
         elements.push(normalizeElement({
             type: "shape", shape: "rect",
             x: fracX, y: fracY, w: fracW, h: fracH,
-            fillColor: chartAreaFill || "#ECECEC",
-            strokeColor: chartAreaFill ? "transparent" : "#D4D4D4",
-            thickness: chartAreaFill ? 0 : 1
+            fillColor: chartAreaFill,
+            strokeColor: "transparent",
+            thickness: 0
         }));
     }
 
-    if (plotAreaFill !== "transparent") {
+    if (plotAreaFill && plotAreaFill !== "transparent") {
         elements.push(normalizeElement({
             type: "shape", shape: "rect",
             x: plotX, y: plotY, w: plotW, h: plotH,
-            fillColor: plotAreaFill || "#F8F8F8",
-            strokeColor: plotAreaFill ? "transparent" : "#CFCFCF",
-            thickness: plotAreaFill ? 0 : 1
+            fillColor: plotAreaFill,
+            strokeColor: "transparent",
+            thickness: 0
         }));
     }
 

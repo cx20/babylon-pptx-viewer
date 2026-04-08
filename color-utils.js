@@ -163,6 +163,29 @@ export function applyColorModifiers(hex, node) {
 // Resolve color from an XML node containing srgbClr, schemeClr, or prstClr children
 export function resolveColor(node) {
     if (!node) return null;
+    if (node.localName === "srgbClr") return applyColorModifiers("#" + node.getAttribute("val"), node);
+    if (node.localName === "scrgbClr") {
+        var selfR = parseInt(node.getAttribute("r") || "0", 10);
+        var selfG = parseInt(node.getAttribute("g") || "0", 10);
+        var selfB = parseInt(node.getAttribute("b") || "0", 10);
+        if (!Number.isFinite(selfR)) selfR = 0;
+        if (!Number.isFinite(selfG)) selfG = 0;
+        if (!Number.isFinite(selfB)) selfB = 0;
+        selfR = Math.max(0, Math.min(100000, selfR));
+        selfG = Math.max(0, Math.min(100000, selfG));
+        selfB = Math.max(0, Math.min(100000, selfB));
+        return applyColorModifiers(rgbToHex(selfR * 255 / 100000, selfG * 255 / 100000, selfB * 255 / 100000), node);
+    }
+    if (node.localName === "schemeClr") {
+        var selfScheme = node.getAttribute("val") || "";
+        var selfBase = themeColors[selfScheme] || "#333333";
+        return applyColorModifiers(selfBase, node);
+    }
+    if (node.localName === "prstClr") {
+        var selfPreset = node.getAttribute("val") || "";
+        var selfPresetBase = PRESET_COLORS[selfPreset] || "#000000";
+        return applyColorModifiers(selfPresetBase, node);
+    }
     var srgb = node.getElementsByTagNameNS(A_NS, "srgbClr")[0];
     if (srgb) return applyColorModifiers("#" + srgb.getAttribute("val"), srgb);
     var scrgb = node.getElementsByTagNameNS(A_NS, "scrgbClr")[0];
