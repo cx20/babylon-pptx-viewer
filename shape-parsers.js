@@ -6,6 +6,32 @@ import { A_NS, P_NS, R_NS, CANVAS_H, normalizeElement } from "./constants.js";
 import { resolveColor, themeColors } from "./color-utils.js";
 import { parseParagraphs, parseOutline, getPresetGeometry, getShapeFill } from "./text-parser.js";
 
+function colorLuma(hex) {
+    if (!hex || hex.charAt(0) !== "#" || hex.length !== 7) return 0;
+    var r = parseInt(hex.substr(1, 2), 16);
+    var g = parseInt(hex.substr(3, 2), 16);
+    var b = parseInt(hex.substr(5, 2), 16);
+    if (!Number.isFinite(r) || !Number.isFinite(g) || !Number.isFinite(b)) return 0;
+    return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+}
+
+function txBodyHasExplicitColor(txBody) {
+    if (!txBody) return false;
+    var rPrs = txBody.getElementsByTagNameNS(A_NS, "rPr");
+    for (var i = 0; i < rPrs.length; i++) {
+        if (rPrs[i].getElementsByTagNameNS(A_NS, "solidFill").length > 0) return true;
+    }
+    var endR = txBody.getElementsByTagNameNS(A_NS, "endParaRPr");
+    for (var j = 0; j < endR.length; j++) {
+        if (endR[j].getElementsByTagNameNS(A_NS, "solidFill").length > 0) return true;
+    }
+    var defR = txBody.getElementsByTagNameNS(A_NS, "defRPr");
+    for (var k = 0; k < defR.length; k++) {
+        if (defR[k].getElementsByTagNameNS(A_NS, "solidFill").length > 0) return true;
+    }
+    return false;
+}
+
 function parseShapeTree(spTreeNode, slideW, slideH, images, relsAll, opts) {
     opts = opts || {};
     var elements = [];
@@ -14,9 +40,9 @@ function parseShapeTree(spTreeNode, slideW, slideH, images, relsAll, opts) {
     var layoutStyles = opts.layoutStyles || {};
     var chartDataMap = opts.chartDataMap || {};
     var diagramDataMap = opts.diagramDataMap || {};
-    // Prefer theme text color regardless of background image presence.
-    // Per-template placeholder/style inheritance can still override this later.
-    var defaultTextColor = themeColors.tx1 || "#333";
+    var sourceLayer = opts.sourceLayer || "slide";
+    // Dark background slides generally require light fallback text for readability.
+    var defaultTextColor = hasBgImage ? (themeColors.lt1 || "#FFFFFF") : (themeColors.tx1 || "#333");
     // Group transform: convert child coords to slide fraction coords
     var gOffX = opts.gOffX || 0, gOffY = opts.gOffY || 0;
     var gScaleX = opts.gScaleX || 1, gScaleY = opts.gScaleY || 1;
@@ -52,7 +78,7 @@ function parseShapeTree(spTreeNode, slideW, slideH, images, relsAll, opts) {
 
         // --- sp (shape) ---
         if (localName === "sp") {
-            parseSp(child, elements, slideW, slideH, skipPlaceholders, defaultTextColor, toFracX, toFracY, toFracW, toFracH, layoutStyles, hasBgImage);
+            parseSp(child, elements, slideW, slideH, skipPlaceholders, defaultTextColor, toFracX, toFracY, toFracW, toFracH, layoutStyles, hasBgImage, sourceLayer);
         }
         // --- pic (picture) ---
         else if (localName === "pic") {
@@ -75,9 +101,10 @@ function parseShapeTree(spTreeNode, slideW, slideH, images, relsAll, opts) {
 }
 
 // --- Parse sp (shape with optional text) ---
-function parseSp(sp, elements, slideW, slideH, skipPH, defTextColor, fx, fy, fw, fh, layoutStyles, hasBgImage) {
+function parseSp(sp, elements, slideW, slideH, skipPH, defTextColor, fx, fy, fw, fh, layoutStyles, hasBgImage, sourceLayer) {
     layoutStyles = layoutStyles || {};
     hasBgImage = hasBgImage || false;
+    sourceLayer = sourceLayer || "slide";
     // Placeholder detection
     var phType = "", phIdx = -1;
     var nvSpPr = sp.getElementsByTagNameNS(P_NS, "nvSpPr")[0];
@@ -113,6 +140,7 @@ function parseSp(sp, elements, slideW, slideH, skipPH, defTextColor, fx, fy, fw,
     var geom = getPresetGeometry(spPr);
     var outline = parseOutline(spPr);
     var fill = getShapeFill(spPr);
+    var hasGradFill = !!(spPr && spPr.getElementsByTagNameNS(A_NS, "gradFill")[0]);
 
     // Style-based fill/color
     var styleFontColor = null;
@@ -124,6 +152,13 @@ function parseSp(sp, elements, slideW, slideH, skipPH, defTextColor, fx, fy, fw,
         }
         var fontRef = style.getElementsByTagNameNS(A_NS, "fontRef")[0];
         if (fontRef) styleFontColor = resolveColor(fontRef);
+    }
+
+    // Master backgrounds sometimes encode glow spots as gradient ellipses.
+    // Rendering them as flat fills causes large white circle artifacts.
+    var isEllipseGeom = geom === "ellipse" || geom === "oval" || geom === "circle" || geom === "donut" || geom === "pie" || geom === "arc" || geom === "chord";
+    if (sourceLayer === "master" && hasGradFill && isEllipseGeom && (!outline || outline.width <= 0)) {
+        fill = null;
     }
 
     // Emit shape rectangle/ellipse
@@ -162,6 +197,11 @@ function parseSp(sp, elements, slideW, slideH, skipPH, defTextColor, fx, fy, fw,
     if (!txBody) {
         console.log("[SP] geom=" + geom + " ph='" + phType + "' fill=" + fill + " pos=(" + fracX.toFixed(3) + "," + fracY.toFixed(3) + ") NO txBody");
         return;
+    }
+
+    // For bg-image slides, title placeholders are usually light text unless explicitly styled.
+    if (hasBgImage && (phType === "title" || phType === "ctrTitle") && !txBodyHasExplicitColor(txBody)) {
+        if (colorLuma(phFC) < 0.55) phFC = themeColors.lt1 || "#FFFFFF";
     }
 
     console.log("[SP] geom=" + geom + " ph='" + phType + "' fill=" + fill + " phFS=" + phFS + " phFC=" + phFC + " pos=(" + fracX.toFixed(3) + "," + fracY.toFixed(3) + ") size=(" + fracW.toFixed(3) + "," + fracH.toFixed(3) + ")");
@@ -340,6 +380,7 @@ function parseGrpSp(grpSp, elements, slideW, slideH, images, relsAll, parentOpts
         layoutStyles: parentOpts ? (parentOpts.layoutStyles || {}) : {},
         chartDataMap: parentOpts ? (parentOpts.chartDataMap || {}) : {},
         diagramDataMap: parentOpts ? (parentOpts.diagramDataMap || {}) : {},
+        sourceLayer: parentOpts ? (parentOpts.sourceLayer || "slide") : "slide",
         gOffX: newGOffX, gOffY: newGOffY,
         gScaleX: newGScaleX, gScaleY: newGScaleY
     };
@@ -854,23 +895,37 @@ function renderBarChart(chartData, elements, fracX, fracY, fracW, fracH, defText
     var plotW = Math.max(0.01, fracW - leftPad - rightPad);
     var plotH = Math.max(0.01, fracH - topPad - bottomPad);
 
-    // PowerPoint-like chart area panel.
-    elements.push(normalizeElement({
-        type: "shape", shape: "rect",
-        x: fracX, y: fracY, w: fracW, h: fracH,
-        fillColor: "#ECECEC", strokeColor: "#D4D4D4", thickness: 1
-    }));
+    // Prefer chart XML area fills when available.
+    var chartAreaFill = chartData.chartAreaFill;
+    var plotAreaFill = chartData.plotAreaFill;
 
-    // Plot area is slightly brighter than chart area.
-    elements.push(normalizeElement({
-        type: "shape", shape: "rect",
-        x: plotX, y: plotY, w: plotW, h: plotH,
-        fillColor: "#F8F8F8", strokeColor: "#CFCFCF", thickness: 1
-    }));
+    if (chartAreaFill !== "transparent") {
+        elements.push(normalizeElement({
+            type: "shape", shape: "rect",
+            x: fracX, y: fracY, w: fracW, h: fracH,
+            fillColor: chartAreaFill || "#ECECEC",
+            strokeColor: chartAreaFill ? "transparent" : "#D4D4D4",
+            thickness: chartAreaFill ? 0 : 1
+        }));
+    }
+
+    if (plotAreaFill !== "transparent") {
+        elements.push(normalizeElement({
+            type: "shape", shape: "rect",
+            x: plotX, y: plotY, w: plotW, h: plotH,
+            fillColor: plotAreaFill || "#F8F8F8",
+            strokeColor: plotAreaFill ? "transparent" : "#CFCFCF",
+            thickness: plotAreaFill ? 0 : 1
+        }));
+    }
 
     var maxV = Math.max(1, chartData.maxValue || 1);
     var axisMax = Math.ceil(maxV / 10) * 10;
     if (axisMax <= 0) axisMax = 10;
+
+    var labelColor = defTextColor || "#666666";
+    var lightText = colorLuma(labelColor) > 0.7;
+    var gridColor = lightText ? "#8CB1C8" : "#CCCCCC";
 
     // Horizontal grid lines + Y labels
     for (var gi = 0; gi <= 6; gi++) {
@@ -881,12 +936,12 @@ function renderBarChart(chartData, elements, fracX, fracY, fracW, fracH, defText
             type: "shape", shape: "line",
             x1: plotX, y1: gy,
             x2: plotX + plotW, y2: gy,
-            color: "#CCCCCC", thickness: 1
+            color: gridColor, thickness: 1
         }));
         elements.push(normalizeElement({
             type: "text", text: String(value),
             x: plotX - fracW * 0.05, y: gy - fracH * 0.015, w: fracW * 0.04,
-            fontSize: 10, color: "#666666", align: "right"
+            fontSize: 10, color: labelColor, align: "right"
         }));
     }
 
@@ -920,29 +975,29 @@ function renderBarChart(chartData, elements, fracX, fracY, fracW, fracH, defText
         elements.push(normalizeElement({
             type: "text", text: categories[ci],
             x: plotX + ci * groupW, y: plotY + plotH + fracH * 0.02, w: groupW,
-            fontSize: 11, color: "#666666", align: "center"
+            fontSize: 11, color: labelColor, align: "center"
         }));
     }
 
     // Legend at bottom-center
     var legY = fracY + fracH - fracH * 0.06;
-    var blockW = fracW * 0.06;
+    var blockSize = Math.min(fracW * 0.03, fracH * 0.03);
     var gapW = fracW * 0.03;
-    var totalW = series.length * (blockW + gapW + fracW * 0.12);
+    var totalW = series.length * (blockSize + gapW + fracW * 0.12);
     var curX = fracX + (fracW - totalW) / 2;
     for (var li = 0; li < series.length; li++) {
         var c = defaultSeriesColors[li % defaultSeriesColors.length];
         elements.push(normalizeElement({
             type: "shape", shape: "rect",
-            x: curX, y: legY, w: blockW, h: fracH * 0.02,
+            x: curX, y: legY, w: blockSize, h: blockSize,
             fillColor: c, strokeColor: "transparent", thickness: 0
         }));
         elements.push(normalizeElement({
             type: "text", text: series[li].name || ("Series " + (li + 1)),
-            x: curX + blockW + fracW * 0.01, y: legY - fracH * 0.008, w: fracW * 0.12,
-            fontSize: 10, color: "#666666", align: "left"
+            x: curX + blockSize + fracW * 0.01, y: legY - fracH * 0.008, w: fracW * 0.12,
+            fontSize: 10, color: labelColor, align: "left"
         }));
-        curX += blockW + gapW + fracW * 0.12;
+        curX += blockSize + gapW + fracW * 0.12;
     }
 }
 

@@ -74,6 +74,15 @@ export function parseParagraphs(txBody, defaultFS, defaultFC, layoutCap) {
             if (ef && fc === defaultFC) { var ec = resolveColor(ef); if (ec) fc = ec; }
         }
 
+        function normalizeRunText(s) {
+            if (!s) return "";
+            // U+000B (vertical tab) appears in some PPTX text runs and should render as spacing.
+            // Strip other control chars that degrade GUI text rendering.
+            return s
+                .replace(/\u000B/g, " ")
+                .replace(/[\u0000-\u0008\u000C\u000E-\u001F\u007F]/g, "");
+        }
+
         var txt = "";
         for (var r = 0; r < runs.length; r++) {
             var rPr = runs[r].getElementsByTagNameNS(A_NS, "rPr")[0];
@@ -87,7 +96,7 @@ export function parseParagraphs(txBody, defaultFS, defaultFC, layoutCap) {
                 if (rsf) { var rc = resolveColor(rsf); if (rc) fc = rc; }
             }
             var t = runs[r].getElementsByTagNameNS(A_NS, "t")[0];
-            if (t) txt += t.textContent;
+            if (t) txt += normalizeRunText(t.textContent);
         }
 
         var align = "left";
@@ -172,6 +181,7 @@ export function parseParagraphs(txBody, defaultFS, defaultFC, layoutCap) {
             }
         }
 
+        txt = normalizeRunText(txt);
         if (cap === "all" && txt) txt = txt.toUpperCase();
 
         result.push({

@@ -6,7 +6,7 @@ import { A_NS, P_NS } from "./constants.js";
 import { resolveColor } from "./color-utils.js";
 import { parseShapeTree } from "./shape-parsers.js";
 
-export function parseSlideXml(xmlStr, slideW, slideH, images, relsAll, hasBgImage, skipPlaceholders, layoutStyles, chartDataMap, diagramDataMap) {
+export function parseSlideXml(xmlStr, slideW, slideH, images, relsAll, hasBgImage, skipPlaceholders, layoutStyles, chartDataMap, diagramDataMap, sourceLayer) {
     var doc = new DOMParser().parseFromString(xmlStr, "application/xml");
     var bgColor = "#FFFFFF";
 
@@ -28,6 +28,7 @@ export function parseSlideXml(xmlStr, slideW, slideH, images, relsAll, hasBgImag
         layoutStyles: layoutStyles || {},
         chartDataMap: chartDataMap || {},
         diagramDataMap: diagramDataMap || {},
+        sourceLayer: sourceLayer || "slide",
         gOffX: 0, gOffY: 0, gScaleX: 1, gScaleY: 1
     };
     var elements = parseShapeTree(spTree, slideW, slideH, images, relsAll, opts);

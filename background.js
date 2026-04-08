@@ -6,6 +6,84 @@ import { A_NS, P_NS, R_NS } from "./constants.js";
 import { resolveColor, themeColors, hexToRgb, applyColorModifiers } from "./color-utils.js";
 import { loadImageAsDataUrl, parseRelsFile } from "./zip-helpers.js";
 
+function detectBlipTint(blip, fallbackColor) {
+    if (!blip) return null;
+
+    // Search entire blip subtree for known art-effect URI.
+    var allEls = blip.getElementsByTagName("*");
+    for (var i = 0; i < allEls.length; i++) {
+        var uri = (allEls[i].getAttribute("uri") || "").toUpperCase();
+        if (uri.indexOf("BEBA8EAE") !== -1) {
+            return { type: "artEffect", color: fallbackColor || themeColors.dk2 || "#0E5580" };
+        }
+    }
+
+    var duotone = null;
+    for (var di = 0; di < blip.childNodes.length; di++) {
+        if (blip.childNodes[di].nodeType === 1 && blip.childNodes[di].localName === "duotone") {
+            duotone = blip.childNodes[di];
+            break;
+        }
+    }
+    if (duotone) {
+        var colors = [];
+        for (var ci = 0; ci < duotone.childNodes.length; ci++) {
+            var cn = duotone.childNodes[ci];
+            if (cn.nodeType !== 1) continue;
+            if (cn.localName === "srgbClr") {
+                colors.push(applyColorModifiers("#" + cn.getAttribute("val"), cn));
+            } else if (cn.localName === "schemeClr") {
+                var sv = cn.getAttribute("val") || "";
+                colors.push(applyColorModifiers(themeColors[sv] || "#000000", cn));
+            } else if (cn.localName === "prstClr") {
+                var pv = cn.getAttribute("val") || "black";
+                colors.push(applyColorModifiers(pv === "black" ? "#000000" : pv === "white" ? "#FFFFFF" : "#808080", cn));
+            }
+        }
+        if (colors.length >= 2) {
+            var c1 = hexToRgb(colors[0]), c2 = hexToRgb(colors[1]);
+            var gray1 = Math.abs(c1.r - c1.g) < 15 && Math.abs(c1.g - c1.b) < 15;
+            var gray2 = Math.abs(c2.r - c2.g) < 15 && Math.abs(c2.g - c2.b) < 15;
+            if (gray1 && gray2) {
+                return { type: "artEffect", color: fallbackColor || themeColors.dk2 || "#0E5580" };
+            }
+            return { type: "duotone", dark: colors[0], light: colors[1] };
+        }
+    }
+
+    var clrChange = blip.getElementsByTagNameNS(A_NS, "clrChange")[0];
+    if (clrChange) return { type: "tint", color: fallbackColor || themeColors.dk2 || "#0E5580" };
+
+    var alphaModFix = blip.getElementsByTagNameNS(A_NS, "alphaModFix")[0];
+    if (alphaModFix) {
+        return { type: "alpha", amt: parseInt(alphaModFix.getAttribute("amt") || "100000", 10) / 100000 };
+    }
+
+    return null;
+}
+
+function isNeutralGray(hex) {
+    if (!hex) return false;
+    var c = hexToRgb(hex);
+    return Math.abs(c.r - c.g) < 12 && Math.abs(c.g - c.b) < 12;
+}
+
+function relativeLuma(hex) {
+    if (!hex) return 1;
+    var c = hexToRgb(hex);
+    return (0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b) / 255;
+}
+
+function pickThemeImageTintColor(phClr) {
+    var dk2 = themeColors.dk2 || "#0E5580";
+    if (!phClr) return dk2;
+
+    // Light/neutral phClr (e.g. lt2) often yields washed-out gray in our renderer
+    // while PowerPoint applies a deeper theme tone through style effects.
+    if (isNeutralGray(phClr) || relativeLuma(phClr) > 0.72) return dk2;
+    return phClr;
+}
+
 function resolveClrNodeWithPh(clrNode, phClr) {
     if (!clrNode) return null;
     if (clrNode.localName === "srgbClr") {
@@ -51,6 +129,7 @@ function resolveFillNodeColor(fillNode, phClr) {
 async function resolveBgRefFromTheme(zip, bgRef) {
     var idx = parseInt(bgRef.getAttribute("idx") || "1001", 10);
     var phClr = resolveColor(bgRef) || themeColors.bg1 || "#FFFFFF";
+    var preferredTintColor = pickThemeImageTintColor(phClr);
     var themeFile = zip.file("ppt/theme/theme1.xml");
     if (!themeFile) return null;
 
@@ -85,7 +164,17 @@ async function resolveBgRefFromTheme(zip, bgRef) {
                 var target = themeRels.all[rId];
                 if (target) {
                     var img = await loadImageAsDataUrl(zip, "ppt/theme/", target);
-                    if (img) return img;
+                    if (img) {
+                        var tint = detectBlipTint(blip, preferredTintColor);
+                        // For style-matrix background images, PowerPoint often derives
+                        // a theme-colored look even without explicit duotone/clrChange.
+                        // Apply a conservative fallback tint using bgRef color.
+                        if (!tint) {
+                            tint = { type: "artEffect", color: preferredTintColor };
+                        }
+                        console.log("[BG]   bgRef idx=" + idx + " phClr=" + phClr + " prefTint=" + preferredTintColor + " imageStyle=" + styleNode.localName + " tint=" + (tint ? JSON.stringify(tint) : "none"));
+                        return { image: img, bgTint: tint };
+                    }
                 }
             }
         }
@@ -126,7 +215,10 @@ export async function extractBackground(xmlStr, zip, basePath, relsAll, slideW, 
                     }
                     if (rId && relsAll[rId]) {
                         var img = await loadImageAsDataUrl(zip, basePath, relsAll[rId]);
-                        if (img) return img;
+                        if (img) {
+                            var tint = detectBlipTint(blip, themeColors.dk2 || "#0E5580");
+                            return tint ? { image: img, bgTint: tint } : img;
+                        }
                     }
                 }
             }
@@ -195,57 +287,7 @@ export function extractBlipEffects(xmlStr) {
     }
     console.log("[BLIP] blip children: [" + blipKids.join(", ") + "]");
 
-    // Search entire bg subtree for art effect URI
-    var allBgEls = bg.getElementsByTagName("*");
-    for (var i = 0; i < allBgEls.length; i++) {
-        var uri = (allBgEls[i].getAttribute("uri") || "").toUpperCase();
-        if (uri.indexOf("BEBA8EAE") !== -1) {
-            console.log("[BLIP] Art effect found in bg subtree");
-            return { type: "artEffect", color: themeColors.dk2 || "#0E5580" };
-        }
-    }
-
-    // Duotone
-    var duotone = null;
-    for (var ci = 0; ci < blip.childNodes.length; ci++) {
-        if (blip.childNodes[ci].localName === "duotone") { duotone = blip.childNodes[ci]; break; }
-    }
-    if (duotone) {
-        var colors = [], rawVals = [];
-        for (var i = 0; i < duotone.childNodes.length; i++) {
-            var cn = duotone.childNodes[i];
-            if (cn.nodeType !== 1) continue;
-            if (cn.localName === "srgbClr") {
-                colors.push(applyColorModifiers("#" + cn.getAttribute("val"), cn));
-                rawVals.push("srgb:" + cn.getAttribute("val"));
-            } else if (cn.localName === "schemeClr") {
-                var val = cn.getAttribute("val") || "";
-                colors.push(applyColorModifiers(themeColors[val] || "#000000", cn));
-                rawVals.push("scheme:" + val);
-            } else if (cn.localName === "prstClr") {
-                var pv = cn.getAttribute("val") || "black";
-                colors.push(applyColorModifiers(pv === "black" ? "#000000" : pv === "white" ? "#FFFFFF" : "#808080", cn));
-                rawVals.push("prst:" + pv);
-            }
-        }
-        console.log("[BLIP] duotone: " + rawVals.join(", ") + " → " + colors.join(", "));
-        if (colors.length >= 2) {
-            var c1 = hexToRgb(colors[0]), c2 = hexToRgb(colors[1]);
-            var gray1 = Math.abs(c1.r - c1.g) < 15 && Math.abs(c1.g - c1.b) < 15;
-            var gray2 = Math.abs(c2.r - c2.g) < 15 && Math.abs(c2.g - c2.b) < 15;
-            if (gray1 && gray2) {
-                console.log("[BLIP] Grayscale duotone detected, applying dk2 tint");
-                return { type: "artEffect", color: themeColors.dk2 || "#0E5580" };
-            } else {
-                return { type: "duotone", dark: colors[0], light: colors[1] };
-            }
-        }
-    }
-
-    var clrChange = blip.getElementsByTagNameNS(A_NS, "clrChange")[0];
-    if (clrChange) return { type: "tint", color: themeColors.dk2 || "#0E5580" };
-    var alphaModFix = blip.getElementsByTagNameNS(A_NS, "alphaModFix")[0];
-    if (alphaModFix) return { type: "alpha", amt: parseInt(alphaModFix.getAttribute("amt") || "100000") / 100000 };
-
-    return null;
+    var tint = detectBlipTint(blip, themeColors.dk2 || "#0E5580");
+    if (tint) console.log("[BLIP] resolved tint: " + JSON.stringify(tint));
+    return tint;
 }
