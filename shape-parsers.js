@@ -17,6 +17,7 @@ function colorLuma(hex) {
 
 function txBodyHasExplicitColor(txBody) {
     if (!txBody) return false;
+    // Check for explicit run properties with solidFill
     var rPrs = txBody.getElementsByTagNameNS(A_NS, "rPr");
     for (var i = 0; i < rPrs.length; i++) {
         if (rPrs[i].getElementsByTagNameNS(A_NS, "solidFill").length > 0) return true;
@@ -28,6 +29,30 @@ function txBodyHasExplicitColor(txBody) {
     var defR = txBody.getElementsByTagNameNS(A_NS, "defRPr");
     for (var k = 0; k < defR.length; k++) {
         if (defR[k].getElementsByTagNameNS(A_NS, "solidFill").length > 0) return true;
+    }
+    // Also check for paragraph style references (pStyle) - they may inherit text color
+    var paragraphs = txBody.getElementsByTagNameNS(A_NS, "p");
+    for (var p = 0; p < paragraphs.length; p++) {
+        var pPr = paragraphs[p].getElementsByTagNameNS(A_NS, "pPr")[0];
+        if (pPr) {
+            var pStyle = pPr.getElementsByTagNameNS(A_NS, "pStyle")[0];
+            if (pStyle) {
+                var styleName = pStyle.getAttribute("val");
+                console.log("[SP] Found pStyle reference: " + styleName);
+                // Also check if the paragraph's defRPr has a color
+                var defRPr = pPr.getElementsByTagNameNS(A_NS, "defRPr")[0];
+                if (defRPr) {
+                    var solidFill = defRPr.getElementsByTagNameNS(A_NS, "solidFill")[0];
+                    if (solidFill) {
+                        var pStyleColor = resolveColor(solidFill);
+                        if (pStyleColor) {
+                            console.log("[SP] pStyle has color: " + pStyleColor);
+                        }
+                    }
+                }
+                return true;  // Paragraph has style reference - assume it defines text color
+            }
+        }
     }
     return false;
 }
@@ -200,8 +225,21 @@ function parseSp(sp, elements, slideW, slideH, skipPH, defTextColor, fx, fy, fw,
     }
 
     // For bg-image slides, title placeholders are usually light text unless explicitly styled.
+    // But if the paragraph has an explicit solidFill in any run, honor that color.
     if (hasBgImage && (phType === "title" || phType === "ctrTitle") && !txBodyHasExplicitColor(txBody)) {
-        if (colorLuma(phFC) < 0.55) phFC = themeColors.lt1 || "#FFFFFF";
+        if (colorLuma(phFC) < 0.55) {
+            // Dark title color on bg-image slide: normalize to light (white)
+            phFC = themeColors.lt1 || "#FFFFFF";
+        }
+        // If phFC ended up as white (either from default or forced above), prefer the theme's
+        // primary text color (tx1/dk1) when it is a distinctive, sufficiently bright color.
+        // This avoids invisible white-on-white text while keeping white on truly dark bg images.
+        if (phFC === (themeColors.lt1 || "#FFFFFF") &&
+            themeColors.tx1 && themeColors.tx1 !== (themeColors.lt1 || "#FFFFFF") &&
+            themeColors.tx1 !== "#000000" && colorLuma(themeColors.tx1) > 0.3) {
+            console.log("[SP] BG-image title: using theme tx1 instead of white: " + themeColors.tx1);
+            phFC = themeColors.tx1;
+        }
     }
 
     console.log("[SP] geom=" + geom + " ph='" + phType + "' fill=" + fill + " phFS=" + phFS + " phFC=" + phFC + " pos=(" + fracX.toFixed(3) + "," + fracY.toFixed(3) + ") size=(" + fracW.toFixed(3) + "," + fracH.toFixed(3) + ")");
@@ -301,8 +339,9 @@ function parsePic(pic, elements, slideW, slideH, images, relsAll, hasBgImage, fx
         }
     }
 
+    var imgDataUrl = images[rId];
     elements.push(normalizeElement({
-        type: "image", dataUrl: images[rId],
+        type: "image", dataUrl: imgDataUrl,
         x: fracX, y: fracY, w: fracW, h: fracH,
         crop: { l: cropL, t: cropT, r: cropR, b: cropB }
     }));
