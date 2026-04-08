@@ -2,8 +2,8 @@
 // pptx-parser.js - Main PPTX orchestrator (coordinates all parsing)
 // ============================================================================
 
-import { SLIDE_EMU_W, SLIDE_EMU_H } from "./constants.js";
-import { parseThemeXml } from "./color-utils.js";
+import { SLIDE_EMU_W, SLIDE_EMU_H, A_NS } from "./constants.js";
+import { parseThemeXml, resolveColor } from "./color-utils.js";
 import { parseRelsFile, buildImageMap, loadImageAsDataUrl } from "./zip-helpers.js";
 import { extractBackground, extractBlipEffects } from "./background.js";
 import { extractPlaceholderStyles, extractMasterTxStyles } from "./style-inheritance.js";
@@ -99,6 +99,28 @@ function extractNumValues(serNode) {
     return values;
 }
 
+function extractFillFromSpPr(spPr) {
+    if (!spPr) return null;
+    var noFill = spPr.getElementsByTagNameNS(A_NS, "noFill")[0];
+    if (noFill) return "transparent";
+
+    var solidFill = spPr.getElementsByTagNameNS(A_NS, "solidFill")[0];
+    if (solidFill) {
+        var c = resolveColor(solidFill);
+        if (c) return c;
+    }
+
+    var gradFill = spPr.getElementsByTagNameNS(A_NS, "gradFill")[0];
+    if (gradFill) {
+        var gs = gradFill.getElementsByTagNameNS(A_NS, "gs");
+        if (gs.length > 0) {
+            var gc = resolveColor(gs[0]);
+            if (gc) return gc;
+        }
+    }
+    return null;
+}
+
 async function buildChartDataMap(zip, slideBasePath, relsAll) {
     var map = {};
     if (!relsAll) return map;
@@ -114,6 +136,15 @@ async function buildChartDataMap(zip, slideBasePath, relsAll) {
             if (!chart) continue;
             var plotArea = chart.getElementsByTagNameNS(C_NS, "plotArea")[0];
             if (!plotArea) continue;
+
+            // Chart/plot area fills (c:spPr with a:* fill children).
+            var chartAreaFill = null;
+            var plotAreaFill = null;
+            var chartSpPr = chart.getElementsByTagNameNS(C_NS, "spPr")[0];
+            if (chartSpPr) chartAreaFill = extractFillFromSpPr(chartSpPr);
+            var plotSpPr = plotArea.getElementsByTagNameNS(C_NS, "spPr")[0];
+            if (plotSpPr) plotAreaFill = extractFillFromSpPr(plotSpPr);
+
             var chartTypeNode =
                 plotArea.getElementsByTagNameNS(C_NS, "barChart")[0] ||
                 plotArea.getElementsByTagNameNS(C_NS, "lineChart")[0] ||
@@ -151,7 +182,9 @@ async function buildChartDataMap(zip, slideBasePath, relsAll) {
                 type: chartTypeNode.localName,
                 categories: categories,
                 series: series,
-                maxValue: maxValue
+                maxValue: maxValue,
+                chartAreaFill: chartAreaFill,
+                plotAreaFill: plotAreaFill
             };
             console.log("[PPTX] Chart loaded for " + rId + ": type=" + chartTypeNode.localName + " cats=" + categories.length + " series=" + series.length);
         } catch (e) {
@@ -360,7 +393,7 @@ async function parsePptx(arrayBuffer) {
             }
         }
 
-        var hasBgImage = bgResult && typeof bgResult === "string";
+        var hasBgImage = !!(bgResult && (typeof bgResult === "string" || (typeof bgResult === "object" && !!bgResult.image)));
         console.log("[PPTX] Slide " + sf.num + " hasBgImage=" + hasBgImage);
 
         // Parse slide shapes
@@ -394,9 +427,10 @@ async function parsePptx(arrayBuffer) {
                 if (!layoutStyles.ctrTitle.fontRefColor) layoutStyles.ctrTitle.fontRefColor = masterTxStyles.titleColor;
             }
         }
-        // Master placeholder fontRef colors apply to all slides, including bgImage slides.
-        // This keeps template-defined title/body colors instead of forcing white text.
+        // Master placeholder fontRef colors generally apply to all slides.
+        // On bg-image slides, title placeholders should not be forced to tx1-like dark colors.
         for (var phKey in masterTxStyles.phFontRef) {
+            if (hasBgImage && (phKey === "title" || phKey === "ctrTitle")) continue;
             if (!layoutStyles[phKey]) layoutStyles[phKey] = {};
             if (!layoutStyles[phKey].fontRefColor) layoutStyles[phKey].fontRefColor = masterTxStyles.phFontRef[phKey];
         }
@@ -405,7 +439,7 @@ async function parsePptx(arrayBuffer) {
             if (!layoutStyles.subTitle) layoutStyles.subTitle = {};
             layoutStyles.subTitle.fontRefColor = masterTxStyles.phFontRef.body;
         }
-        var parsed = parseSlideXml(xmlStr, slideW, slideH, images, slideRels.all, hasBgImage, false, layoutStyles, chartDataMap, diagramDataMap);
+        var parsed = parseSlideXml(xmlStr, slideW, slideH, images, slideRels.all, hasBgImage, false, layoutStyles, chartDataMap, diagramDataMap, "slide");
         console.log("[PPTX] Slide " + sf.num + " own elements: " + parsed.elements.length);
 
         // Parse layout shapes (non-placeholder decorations only)
@@ -418,15 +452,40 @@ async function parsePptx(arrayBuffer) {
                 var layoutRels2 = await parseRelsFile(zip, layoutPath2.replace(/([^/]+)$/, "_rels/$1.rels"));
                 var layoutImgs = await buildImageMap(zip, layoutBase2, layoutRels2.images);
                 var layoutParsed = parseSlideXml(
-                    await layoutFile.async("string"), slideW, slideH, layoutImgs, layoutRels2.all, hasBgImage, true, {}, {}, {}
+                    await layoutFile.async("string"), slideW, slideH, layoutImgs, layoutRels2.all, hasBgImage, true, {}, {}, {}, "layout"
                 );
                 console.log("[PPTX]   layout contributed " + layoutParsed.elements.length + " elements");
                 parsed.elements = layoutParsed.elements.concat(parsed.elements);
             }
+
+            // Parse master shapes (non-placeholder decorations only)
+            var layoutRelsForMasterShapes = await parseRelsFile(zip, layoutPath2.replace(/([^/]+)$/, "_rels/$1.rels"));
+            if (layoutRelsForMasterShapes.master) {
+                var masterPath2 = (layoutBase2 + layoutRelsForMasterShapes.master).replace(/[^/]+\/\.\.\//g, "");
+                var masterBase2 = masterPath2.replace(/[^/]*$/, "");
+                var masterFile = zip.file(masterPath2);
+                if (masterFile) {
+                    console.log("[PPTX] Parsing master shapes for slide " + sf.num + ": " + masterPath2);
+                    var masterRels2 = await parseRelsFile(zip, masterPath2.replace(/([^/]+)$/, "_rels/$1.rels"));
+                    var masterImgs = await buildImageMap(zip, masterBase2, masterRels2.images);
+                    var masterParsed = parseSlideXml(
+                        await masterFile.async("string"), slideW, slideH, masterImgs, masterRels2.all, hasBgImage, true, {}, {}, {}, "master"
+                    );
+                    console.log("[PPTX]   master contributed " + masterParsed.elements.length + " elements");
+                    parsed.elements = masterParsed.elements.concat(parsed.elements);
+                }
+            }
         }
 
         // Build slide object
-        var bgTint = hasBgImage ? extractBlipEffects(xmlStr) : null;
+        var bgTint = null;
+        if (hasBgImage) {
+            if (bgResult && typeof bgResult === "object" && bgResult.bgTint) {
+                bgTint = bgResult.bgTint;
+            } else {
+                bgTint = extractBlipEffects(xmlStr);
+            }
+        }
         if (bgTint) console.log("[PPTX] Slide " + sf.num + " bgTint: " + JSON.stringify(bgTint));
         var slide = {
             bg: parsed.bgColor, bgImage: null, bgTint: bgTint,
@@ -434,6 +493,7 @@ async function parsePptx(arrayBuffer) {
         };
         if (bgResult) {
             if (typeof bgResult === "string") slide.bgImage = bgResult;
+            else if (bgResult.image) slide.bgImage = bgResult.image;
             else if (bgResult.solidColor) slide.bg = bgResult.solidColor;
         }
 
