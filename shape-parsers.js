@@ -650,18 +650,78 @@ function getSmartArtStyleColorRefs(spNode) {
     };
 }
 
-function getBlipEmbedRid(spPr) {
+function getBlipEmbedRid(spPr, imageMap) {
     if (!spPr) return "";
-    var blip = spPr.getElementsByTagNameNS(A_NS, "blip")[0];
-    if (blip) {
-        var rid = blip.getAttribute("r:embed") || blip.getAttributeNS(R_NS, "embed") || "";
-        if (rid) return rid;
+    var candidates = [];
+
+    // SVG blip extension: asvg:svgBlip r:embed (highest-quality option)
+    var svgBlips = spPr.getElementsByTagNameNS("*", "svgBlip");
+    for (var s = 0; s < svgBlips.length; s++) {
+        var svgRid = svgBlips[s].getAttribute("r:embed") || svgBlips[s].getAttributeNS(R_NS, "embed") || "";
+        if (svgRid) candidates.push(svgRid);
     }
-    var all = spPr.getElementsByTagNameNS("*", "svgBlip");
-    if (all && all.length > 0) {
-        return all[0].getAttribute("r:embed") || all[0].getAttributeNS(R_NS, "embed") || "";
+
+    // Regular a:blip r:embed (may point to PNG fallback or directly to SVG)
+    var blipNodes = spPr.getElementsByTagNameNS(A_NS, "blip");
+    for (var b = 0; b < blipNodes.length; b++) {
+        var brid = blipNodes[b].getAttribute("r:embed") || blipNodes[b].getAttributeNS(R_NS, "embed") || "";
+        if (brid && candidates.indexOf(brid) === -1) candidates.push(brid);
     }
-    return "";
+
+    // If imageMap provided, return the first candidate that actually exists in the map
+    if (imageMap) {
+        for (var ci = 0; ci < candidates.length; ci++) {
+            if (imageMap[candidates[ci]]) return candidates[ci];
+        }
+    }
+    return candidates[0] || "";
+}
+
+function getDiagramCanvasBounds(drawingDoc, fallback) {
+    if (!drawingDoc) return fallback;
+    var spTree = drawingDoc.getElementsByTagNameNS("*", "spTree")[0];
+    if (!spTree) return fallback;
+
+    var grpSpPr = spTree.getElementsByTagNameNS("*", "grpSpPr")[0];
+    if (!grpSpPr) return fallback;
+
+    var xfrm = grpSpPr.getElementsByTagNameNS(A_NS, "xfrm")[0] || grpSpPr.getElementsByTagNameNS("*", "xfrm")[0];
+    if (!xfrm) return fallback;
+
+    var off = xfrm.getElementsByTagNameNS(A_NS, "chOff")[0] || xfrm.getElementsByTagNameNS("*", "chOff")[0] ||
+        xfrm.getElementsByTagNameNS(A_NS, "off")[0] || xfrm.getElementsByTagNameNS("*", "off")[0];
+    var ext = xfrm.getElementsByTagNameNS(A_NS, "chExt")[0] || xfrm.getElementsByTagNameNS("*", "chExt")[0] ||
+        xfrm.getElementsByTagNameNS(A_NS, "ext")[0] || xfrm.getElementsByTagNameNS("*", "ext")[0];
+    if (!off || !ext) return fallback;
+
+    var x = parseInt(off.getAttribute("x"), 10) || 0;
+    var y = parseInt(off.getAttribute("y"), 10) || 0;
+    var w = parseInt(ext.getAttribute("cx"), 10) || 0;
+    var h = parseInt(ext.getAttribute("cy"), 10) || 0;
+    if (w <= 0 || h <= 0) return fallback;
+
+    return { minX: x, minY: y, maxX: x + w, maxY: y + h };
+}
+
+function getSmartArtTextAnchor(txBody) {
+    if (!txBody) return "ctr";
+    var bodyPr = txBody.getElementsByTagNameNS(A_NS, "bodyPr")[0] || txBody.getElementsByTagNameNS("*", "bodyPr")[0];
+    var anchor = bodyPr ? (bodyPr.getAttribute("anchor") || "") : "";
+    if (!anchor) return "ctr";
+    return anchor.toLowerCase();
+}
+
+function getSmartArtTextLineCount(txBody) {
+    if (!txBody) return 1;
+    var paras = txBody.getElementsByTagNameNS(A_NS, "p");
+    if (!paras || paras.length === 0) return 1;
+    var count = 0;
+    for (var i = 0; i < paras.length; i++) {
+        var p = paras[i];
+        var hasText = !!p.getElementsByTagNameNS(A_NS, "t")[0];
+        if (hasText) count++;
+    }
+    return Math.max(1, count || paras.length);
 }
 
 function renderSmartArtFromDrawingGeneric(diagramEntry, elements, fracX, fracY, fracW, fracH, defTextColor) {
@@ -686,8 +746,15 @@ function renderSmartArtFromDrawingGeneric(diagramEntry, elements, fracX, fracY, 
     }
     if (bounds.length === 0 || maxX <= minX || maxY <= minY) return false;
 
+    var canvasBounds = getDiagramCanvasBounds(drawingDoc, { minX: minX, minY: minY, maxX: maxX, maxY: maxY });
+    minX = canvasBounds.minX;
+    minY = canvasBounds.minY;
+    maxX = canvasBounds.maxX;
+    maxY = canvasBounds.maxY;
+
     var bw = maxX - minX;
     var bh = maxY - minY;
+    if (bw <= 0 || bh <= 0) return false;
     function mapX(v) { return fracX + ((v - minX) / bw) * fracW; }
     function mapY(v) { return fracY + ((v - minY) / bh) * fracH; }
     function mapW(v) { return (v / bw) * fracW; }
@@ -704,13 +771,21 @@ function renderSmartArtFromDrawingGeneric(diagramEntry, elements, fracX, fracY, 
         var geom = getPresetGeometry(spPr) || "rect";
         var fill = getShapeFill(spPr);
         var outline = parseOutline(spPr);
-        var hasBlip = !!spPr.getElementsByTagNameNS(A_NS, "blipFill")[0];
+        // Detect image shapes: check both a:blipFill and direct asvg:svgBlip in spPr
+        var hasBlip = !!(spPr.getElementsByTagNameNS(A_NS, "blipFill")[0] ||
+                         spPr.getElementsByTagNameNS("*", "svgBlip")[0]);
         var styleRefs = getSmartArtStyleColorRefs(sp);
         if (styleRefs.fillColor) fill = styleRefs.fillColor;
 
+        console.log("[SmartArt] shape[" + bi + "] geom=" + geom + " hasBlip=" + hasBlip +
+            " fill=" + fill + " pos=(" + sx.toFixed(3) + "," + sy.toFixed(3) +
+            ") size=(" + sw.toFixed(3) + "," + sh.toFixed(3) + ")");
+
         if (hasBlip) {
-            var blipRid = getBlipEmbedRid(spPr);
             var imgMap = diagramEntry.drawingImageMap || {};
+            var blipRid = getBlipEmbedRid(spPr, imgMap);
+            console.log("[SmartArt]   blipRid=" + blipRid + " inMap=" + !!imgMap[blipRid] +
+                " knownRids=[" + Object.keys(imgMap).join(",") + "]");
             if (blipRid && imgMap[blipRid]) {
                 elements.push(normalizeElement({
                     type: "image",
@@ -740,20 +815,32 @@ function renderSmartArtFromDrawingGeneric(diagramEntry, elements, fracX, fracY, 
         var txXfrm = parseSimpleXfrm(sp.getElementsByTagNameNS("*", "txXfrm")[0]);
 
         var tx = sx + sw * 0.08;
-        var ty = sy + sh * 0.36;
+        var ty = sy + sh * 0.1;
         var tw = sw * 0.84;
+        var th = sh * 0.8;
         if (txXfrm && txXfrm.w > 0 && txXfrm.h > 0) {
             tx = mapX(txXfrm.x);
             ty = mapY(txXfrm.y);
             tw = mapW(txXfrm.w);
+            th = mapH(txXfrm.h);
         }
+        var fontSize = getTextFontSizeFromTxBody(txBody, 16);
+        var lineCount = getSmartArtTextLineCount(txBody);
+        var estimatedTextH = Math.max(fontSize * 1.2 * lineCount, fontSize * 1.35) / CANVAS_H;
+        var anchor = getSmartArtTextAnchor(txBody);
+        if (anchor === "ctr" || anchor === "mid") {
+            ty += Math.max(0, (th - estimatedTextH) / 2);
+        } else if (anchor === "b") {
+            ty += Math.max(0, th - estimatedTextH);
+        }
+
         var rawTextColor = readTextColorFromTxBody(txBody, styleRefs.fontColor || null);
         var finalTextColor = pickReadableTextColor(rawTextColor, fill, defTextColor || "#000000");
 
         textEls.push(normalizeElement({
             type: "text", text: text,
             x: tx, y: ty, w: tw,
-            fontSize: getTextFontSizeFromTxBody(txBody, 16),
+            fontSize: fontSize,
             color: finalTextColor,
             align: getTextAlignFromTxBody(txBody)
         }));
