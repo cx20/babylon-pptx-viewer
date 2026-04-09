@@ -2,7 +2,7 @@
 // shape-parsers.js - Shape tree parsing (sp, pic, cxnSp, grpSp, graphicFrame)
 // ============================================================================
 
-import { A_NS, P_NS, R_NS, CANVAS_H, normalizeElement } from "./constants.js";
+import { A_NS, P_NS, R_NS, CANVAS_W, CANVAS_H, normalizeElement } from "./constants.js";
 import { resolveColor, themeColors } from "./color-utils.js";
 import { parseParagraphs, parseOutline, getPresetGeometry, getShapeFill } from "./text-parser.js";
 
@@ -182,8 +182,13 @@ function parseSp(sp, elements, slideW, slideH, skipPH, defTextColor, fx, fy, fw,
     // Master backgrounds sometimes encode glow spots as gradient ellipses.
     // Rendering them as flat fills causes large white circle artifacts.
     var isEllipseGeom = geom === "ellipse" || geom === "oval" || geom === "circle" || geom === "donut" || geom === "pie" || geom === "arc" || geom === "chord";
-    if (sourceLayer === "master" && hasGradFill && isEllipseGeom && (!outline || outline.width <= 0)) {
-        fill = null;
+    var hasTextBodyNode = !!(sp.getElementsByTagNameNS(P_NS, "txBody")[0] || sp.getElementsByTagNameNS(A_NS, "txBody")[0]);
+    // Some templates encode glow spots as gradient ellipses in both master and slide layers.
+    // Flattening those gradients to a solid fill creates an unintended white disk.
+    if (hasGradFill && isEllipseGeom && (!outline || outline.width <= 0)) {
+        if (sourceLayer === "master" || (sourceLayer === "slide" && hasBgImage && !hasTextBodyNode)) {
+            fill = null;
+        }
     }
 
     // Emit shape rectangle/ellipse
@@ -890,14 +895,27 @@ function renderSmartArtFromDrawing(diagramEntry, elements, fracX, fracY, fracW, 
         var txXfrmNode = sp.getElementsByTagNameNS("*", "txXfrm")[0];
         var txXfrm = parseSimpleXfrm(txXfrmNode);
 
+        var styleRefs = getSmartArtStyleColorRefs(sp);
+        var partFill = getShapeFill(spPr) || styleRefs.fillColor || "#5B7FC5";
+        // For pie labels, prefer explicit run color only; otherwise pick readable color from slice fill.
+        var rawTextColor = readTextColorFromTxBody(txBody, null);
+
         pieParts.push({
             xfrm: x,
             txXfrm: txXfrm,
             text: readTextFromTxBody(txBody),
             startDeg: adj1 / 60000,
             endDeg: adj2 / 60000,
-            fillColor: getShapeFill(spPr) || "#5B7FC5",
-            textColor: readTextColorFromTxBody(txBody, defTextColor || "#FFFFFF")
+            fillColor: partFill,
+            textColor: (function () {
+                var picked = pickReadableTextColor(rawTextColor, partFill, "#000000");
+                // Many SmartArt pie templates carry white text style refs even on bright slices.
+                // Keep explicit non-white colors, but force dark text for bright slice fills.
+                var isWhiteLike = (picked || "").toLowerCase() === "#ffffff";
+                if (isWhiteLike && colorLuma(partFill) > 0.45) return "#000000";
+                return picked;
+            })(),
+            baseFontSize: getTextFontSizeFromTxBody(txBody, 22)
         });
     }
 
@@ -949,10 +967,17 @@ function renderSmartArtFromDrawing(diagramEntry, elements, fracX, fracY, fracW, 
             th = sh * 0.12;
         }
         if (part.text) {
+            var boxH = (th || sh * 0.12) * CANVAS_H;
+            var boxW = tw * CANVAS_W;
+            var isCjk = /[\u3000-\u9FFF\uF900-\uFAFF]/.test(part.text);
+            var estCharW = isCjk ? 1.0 : 0.58;
+            var fsByH = Math.floor(boxH * 0.58);
+            var fsByW = Math.floor(boxW / Math.max(1, part.text.length * estCharW));
+            var finalFs = Math.max(10, Math.min(part.baseFontSize || 22, fsByH, fsByW));
             textEls.push(normalizeElement({
                 type: "text", text: part.text,
                 x: tx, y: ty, w: tw,
-                fontSize: Math.max(12, Math.round((th || sh * 0.12) * CANVAS_H * 0.65)),
+                fontSize: finalFs,
                 color: part.textColor,
                 align: "center",
                 fontWeight: "normal"
