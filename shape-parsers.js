@@ -163,6 +163,16 @@ function parseSp(sp, elements, slideW, slideH, skipPH, defTextColor, fx, fy, fw,
     var spPr = sp.getElementsByTagNameNS(P_NS, "spPr")[0];
     if (!spPr) spPr = sp.getElementsByTagNameNS(A_NS, "spPr")[0];
     var geom = getPresetGeometry(spPr);
+    var isWedgeRoundRectCallout = geom === "wedgeRoundRectCallout";
+
+    if (isWedgeRoundRectCallout && fracH > 0) {
+        var origH = fracH;
+        fracH = fracH * 1.25;
+        fracY = fracY - (fracH - origH) * 0.5;
+        if (fracY < 0) fracY = 0;
+        if (fracY + fracH > 1) fracH = Math.max(0.01, 1 - fracY);
+    }
+
     var outline = parseOutline(spPr);
     var fill = getShapeFill(spPr);
     var hasGradFill = !!(spPr && spPr.getElementsByTagNameNS(A_NS, "gradFill")[0]);
@@ -216,6 +226,10 @@ function parseSp(sp, elements, slideW, slideH, skipPH, defTextColor, fx, fy, fw,
         // Non-placeholder text boxes in PPT usually default to ~18pt.
         // Height-based estimation made bullet text too large in fixtures.
         phFS = 18;
+    }
+    if (isWedgeRoundRectCallout && !phType) {
+        // User request: make callout text about 0.85x.
+        phFS = Math.max(10, Math.round(phFS * 0.85));
     }
     // Apply layout fontRef color as default, then slide's own style overrides
     if (phLayout && phLayout.fontRefColor) phFC = phLayout.fontRefColor;
@@ -271,13 +285,61 @@ function parseSp(sp, elements, slideW, slideH, skipPH, defTextColor, fx, fy, fw,
         if (rI !== null) iR = parseInt(rI) / slideW;
         if (bI !== null) iB = parseInt(bI) / slideH;
     }
+    if (isWedgeRoundRectCallout) {
+        // Keep callout text centered in the rounded body (exclude bottom tail region).
+        anchor = "ctr";
+        iL = Math.max(iL, fracW * 0.10);
+        iR = Math.max(iR, fracW * 0.10);
+        iT = Math.max(iT, fracH * 0.12);
+        iB = Math.max(iB, fracH * 0.26);
+    }
     console.log("[SP]   anchor=" + anchor + " (explicit=" + (bodyPr && bodyPr.getAttribute("anchor") || "none") + " default=" + defaultAnchor + ")");
 
     var layoutCap = (phLayout && phLayout.cap) ? phLayout.cap : "";
     var paras = parseParagraphs(txBody, phFS, phFC, layoutCap);
+    if (isWedgeRoundRectCallout) {
+        paras.forEach(function (p) {
+            p.fontSize = Math.max(9, Math.round(p.fontSize * 0.85));
+            p.align = "center";
+        });
+    }
     paras.forEach(function(p, pi) {
         if (!p.isEmpty) console.log("[SP]   para[" + pi + "] '" + p.text.substring(0,30) + "' fs=" + p.fontSize + " color=" + p.color + " align=" + p.align);
     });
+
+    var areaTop = fracY + iT, areaH = fracH - iT - iB;
+    if (isWedgeRoundRectCallout) {
+        var calloutLines = [];
+        var calloutFS = phFS;
+        var calloutColor = phFC;
+        for (var cpi = 0; cpi < paras.length; cpi++) {
+            var cp = paras[cpi];
+            if (!cp.isEmpty && cp.text) {
+                calloutLines.push(cp.text);
+                if (cp.fontSize) calloutFS = cp.fontSize;
+                if (cp.color) calloutColor = cp.color;
+            }
+        }
+        if (calloutLines.length > 0) {
+            elements.push(normalizeElement({
+                type: "text",
+                text: calloutLines.join("\n"),
+                x: fracX + iL,
+                y: areaTop,
+                w: Math.max(0.01, fracW - iL - iR),
+                h: Math.max(0.01, areaH),
+                fontSize: calloutFS,
+                color: calloutColor,
+                fontWeight: "normal",
+                fontStyle: "normal",
+                align: "center",
+                valign: "center",
+                rotation: rotDeg,
+                wrapMode: "char"
+            }));
+        }
+        return;
+    }
 
     // Calculate vertical positioning based on anchor
     var totalH = 0, paraH = [];
@@ -286,7 +348,6 @@ function parseSp(sp, elements, slideW, slideH, skipPH, defTextColor, fx, fy, fw,
         h += (p.spaceBefore || 0) + (p.spaceAfter || 0);
         paraH.push(h); totalH += h;
     });
-    var areaTop = fracY + iT, areaH = fracH - iT - iB;
     var thFrac = totalH / CANVAS_H;
     var startY = areaTop;
     if (anchor === "ctr" || anchor === "mid") startY = areaTop + (areaH - thFrac) / 2;
@@ -306,7 +367,8 @@ function parseSp(sp, elements, slideW, slideH, skipPH, defTextColor, fx, fy, fw,
                 x: textX, y: curY, w: textW,
                 fontSize: p.fontSize, color: p.color,
                 fontWeight: p.fontWeight, fontStyle: p.italic ? "italic" : "normal",
-                align: p.align, rotation: rotDeg
+                align: p.align, rotation: rotDeg,
+                wrapMode: isWedgeRoundRectCallout ? "char" : undefined
             }));
         }
         curY += paraH[pi] / CANVAS_H;
