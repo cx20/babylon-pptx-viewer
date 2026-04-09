@@ -143,17 +143,22 @@ function createPieDataUrl(widthPx, heightPx, fillColor, startDeg, endDeg) {
 // Render a single text element into a GUI container
 function renderTextElement(el, container, canvasW, canvasH, fontScale) {
     var tb = new BABYLON.GUI.TextBlock();
-    // Insert zero-width spaces for CJK word wrapping
-    var displayText = el.text.replace(/([\u3000-\u9FFF\uF900-\uFAFF\uFF00-\uFFEF])/g, "\u200B$1");
+    // Only force CJK break opportunities when there are no natural separators.
+    var hasCJK = /[\u3000-\u9FFF\uF900-\uFAFF\uFF00-\uFFEF]/.test(el.text);
+    var hasNaturalBreak = /[\s\-\/]/.test(el.text);
+    var displayText = (hasCJK && !hasNaturalBreak)
+        ? el.text.replace(/([\u3000-\u9FFF\uF900-\uFAFF\uFF00-\uFFEF])/g, "\u200B$1")
+        : el.text;
     var renderFS = Math.round(el.fontSize * fontScale);
     tb.text = displayText; tb.fontSize = renderFS;
     tb.fontWeight = el.fontWeight || "normal"; tb.fontStyle = el.fontStyle || "normal";
-    tb.color = el.color; tb.fontFamily = "Segoe UI, Calibri, sans-serif";
+    tb.color = el.color;
+    // Prefer Japanese Office-like fonts first to keep CJK line breaks closer to PowerPoint.
+    tb.fontFamily = "Meiryo UI, Meiryo, Yu Gothic UI, MS PGothic, Segoe UI, Calibri, sans-serif";
     tb.textWrapping = true; tb.resizeToFit = false;
     if (el.w && el.w > 0) {
         var containerW = el.w * canvasW;
         tb.width = containerW + "px";
-        var hasCJK = /[\u3000-\u9FFF\uF900-\uFAFF]/.test(el.text);
         var charW = hasCJK ? 1.0 : 0.55;
         var estTextW = el.text.length * renderFS * charW;
         var fs = renderFS;
