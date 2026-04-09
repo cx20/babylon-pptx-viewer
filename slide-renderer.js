@@ -104,6 +104,68 @@ function createRightArrowDataUrl(widthPx, heightPx, fillColor, strokeColor, stro
     return canvas.toDataURL("image/png");
 }
 
+function createWedgeRoundRectCalloutDataUrl(widthPx, heightPx, fillColor, strokeColor, strokeWidth, pointLeft) {
+    var w = Math.max(16, Math.round(widthPx));
+    var h = Math.max(16, Math.round(heightPx));
+    var canvas = document.createElement("canvas");
+    canvas.width = w;
+    canvas.height = h;
+    var ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+
+    var radius = Math.max(3, Math.round(Math.min(w, h) * 0.06));
+    var pad = Math.max(1, Math.round((strokeWidth || 1) * 0.5));
+    var x = pad;
+    var y = pad;
+    var rw = w - pad * 2;
+    var rh = h - pad * 2;
+
+    // Keep the tail inside bounds; previous implementation drew the tip outside and got clipped.
+    var tailH = Math.max(6, Math.round(h * 0.18));
+    var bodyH = Math.max(8, rh - tailH);
+    var baseY = y + bodyH;
+    var tailBaseCenter = pointLeft ? (x + rw * 0.30) : (x + rw * 0.70);
+    var tailBaseHalf = Math.max(4, Math.round(Math.min(w, h) * 0.07));
+    var tipX = pointLeft ? (tailBaseCenter - tailBaseHalf * 1.8) : (tailBaseCenter + tailBaseHalf * 1.8);
+    tipX = Math.max(x + radius + 1, Math.min(x + rw - radius - 1, tipX));
+    var tipY = y + rh;
+
+    ctx.beginPath();
+    ctx.moveTo(x + radius, y);
+    ctx.lineTo(x + rw - radius, y);
+    ctx.quadraticCurveTo(x + rw, y, x + rw, y + radius);
+    ctx.lineTo(x + rw, baseY - radius);
+    ctx.quadraticCurveTo(x + rw, baseY, x + rw - radius, baseY);
+
+    // Bottom edge with integrated wedge tail
+    var rightBaseX = tailBaseCenter + tailBaseHalf;
+    var leftBaseX = tailBaseCenter - tailBaseHalf;
+    ctx.lineTo(rightBaseX, baseY);
+    ctx.lineTo(tipX, tipY);
+    ctx.lineTo(leftBaseX, baseY);
+
+    ctx.lineTo(x + radius, baseY);
+    ctx.quadraticCurveTo(x, baseY, x, baseY - radius);
+    ctx.lineTo(x, y + radius);
+    ctx.quadraticCurveTo(x, y, x + radius, y);
+    ctx.closePath();
+
+    var hasFill = fillColor && fillColor !== "transparent";
+    if (hasFill) {
+        ctx.fillStyle = fillColor;
+        ctx.fill();
+    }
+
+    var hasStroke = strokeColor && strokeColor !== "transparent";
+    if (hasStroke && strokeWidth > 0) {
+        ctx.lineWidth = strokeWidth;
+        ctx.strokeStyle = strokeColor;
+        ctx.stroke();
+    }
+
+    return canvas.toDataURL("image/png");
+}
+
 function normalizeDeg(value) {
     var d = Number(value);
     if (!Number.isFinite(d)) return 0;
@@ -140,13 +202,33 @@ function createPieDataUrl(widthPx, heightPx, fillColor, startDeg, endDeg) {
     return canvas.toDataURL("image/png");
 }
 
+function wrapTextByCharWidth(text, maxChars) {
+    if (!text || !Number.isFinite(maxChars) || maxChars < 1) return text || "";
+    var lines = (text || "").split("\n");
+    var out = [];
+    lines.forEach(function (line) {
+        if (line.length <= maxChars) {
+            out.push(line);
+            return;
+        }
+        var i = 0;
+        while (i < line.length) {
+            out.push(line.slice(i, i + maxChars));
+            i += maxChars;
+        }
+    });
+    return out.join("\n");
+}
+
 // Render a single text element into a GUI container
 function renderTextElement(el, container, canvasW, canvasH, fontScale) {
     var tb = new BABYLON.GUI.TextBlock();
+    var forceCharWrap = el.wrapMode === "char";
+    var forceVCenter = el.valign === "center";
     // Only force CJK break opportunities when there are no natural separators.
     var hasCJK = /[\u3000-\u9FFF\uF900-\uFAFF\uFF00-\uFFEF]/.test(el.text);
     var hasNaturalBreak = /[\s\-\/]/.test(el.text);
-    var displayText = (hasCJK && !hasNaturalBreak)
+    var displayText = ((hasCJK && !hasNaturalBreak) || forceCharWrap)
         ? el.text.replace(/([\u3000-\u9FFF\uF900-\uFAFF\uFF00-\uFFEF])/g, "\u200B$1")
         : el.text;
     var renderFS = Math.round(el.fontSize * fontScale);
@@ -160,20 +242,30 @@ function renderTextElement(el, container, canvasW, canvasH, fontScale) {
         var containerW = el.w * canvasW;
         tb.width = containerW + "px";
         var charW = hasCJK ? 1.0 : 0.55;
+        if (forceCharWrap && hasCJK) {
+            var maxChars = Math.max(1, Math.floor(containerW / Math.max(1, renderFS * charW)));
+            displayText = wrapTextByCharWidth(el.text, maxChars);
+            tb.text = displayText;
+        }
         var estTextW = el.text.length * renderFS * charW;
         var fs = renderFS;
         if (fs >= 12 && estTextW > containerW * 2) {
             fs = Math.max(8, Math.floor(containerW * 2 / (el.text.length * charW)));
             tb.fontSize = fs;
         }
-        var estLines = Math.ceil(el.text.length * fs * charW / containerW) || 1;
-        var estHeight = Math.max(estLines * fs * 1.4, fs * 1.5);
-        tb.height = estHeight + "px";
+        if (el.h && el.h > 0) {
+            tb.height = (el.h * canvasH) + "px";
+        } else {
+            var lineCount = (tb.text || "").split("\n").length;
+            var estLines = Math.max(lineCount, Math.ceil(el.text.length * fs * charW / containerW) || 1);
+            var estHeight = Math.max(estLines * fs * 1.4, fs * 1.5);
+            tb.height = estHeight + "px";
+        }
     }
     if (el.align === "center") tb.textHorizontalAlignment = BABYLON.GUI.Control.HORIZONTAL_ALIGNMENT_CENTER;
     else if (el.align === "right") tb.textHorizontalAlignment = BABYLON.GUI.Control.HORIZONTAL_ALIGNMENT_RIGHT;
     else tb.textHorizontalAlignment = BABYLON.GUI.Control.HORIZONTAL_ALIGNMENT_LEFT;
-    tb.textVerticalAlignment = BABYLON.GUI.Control.VERTICAL_ALIGNMENT_TOP;
+    tb.textVerticalAlignment = forceVCenter ? BABYLON.GUI.Control.VERTICAL_ALIGNMENT_CENTER : BABYLON.GUI.Control.VERTICAL_ALIGNMENT_TOP;
     tb.left = (el.x * canvasW) + "px"; tb.top = (el.y * canvasH) + "px";
     tb.horizontalAlignment = BABYLON.GUI.Control.HORIZONTAL_ALIGNMENT_LEFT;
     tb.verticalAlignment = BABYLON.GUI.Control.VERTICAL_ALIGNMENT_TOP;
@@ -280,6 +372,33 @@ export function renderSlide(app) {
                     arr.addControl(arrImg);
                 }
                 sLayer.addControl(arr);
+            } else if (el.shape === "wedgeRoundRectCallout") {
+                var callStrokeW = el.thickness !== undefined ? el.thickness : (el.borderWidth || 0);
+                var callStrokeColor = el.strokeColor || el.borderColor || "#888";
+                if (!callStrokeW || callStrokeW <= 0) callStrokeW = 1;
+                var call = new BABYLON.GUI.Rectangle();
+                call.left = (el.x * CANVAS_W) + "px"; call.top = (el.y * CANVAS_H) + "px";
+                call.width = (el.w * CANVAS_W) + "px"; call.height = (el.h * CANVAS_H) + "px";
+                call.thickness = 0; call.background = "transparent";
+                call.horizontalAlignment = BABYLON.GUI.Control.HORIZONTAL_ALIGNMENT_LEFT;
+                call.verticalAlignment = BABYLON.GUI.Control.VERTICAL_ALIGNMENT_TOP;
+                if (el.rotation) call.rotation = el.rotation * Math.PI / 180;
+
+                var pointLeft = (el.x || 0) > 0.5;
+                var callData = createWedgeRoundRectCalloutDataUrl(
+                    el.w * CANVAS_W,
+                    el.h * CANVAS_H,
+                    el.fillColor || "#FFFFFF",
+                    callStrokeColor,
+                    callStrokeW,
+                    pointLeft
+                );
+                if (callData) {
+                    var callImg = new BABYLON.GUI.Image("call_" + Math.random(), callData);
+                    callImg.stretch = BABYLON.GUI.Image.STRETCH_FILL;
+                    call.addControl(callImg);
+                }
+                sLayer.addControl(call);
             } else {
                 var rectStrokeW = el.thickness !== undefined ? el.thickness : (el.borderWidth || 0);
                 var rectStrokeColor = el.strokeColor || el.borderColor || "transparent";
@@ -399,6 +518,29 @@ export function buildThumbnails(app) {
                         sarr.stretch = BABYLON.GUI.Image.STRETCH_FILL;
                         sa.addControl(sarr);
                         th.addControl(sa);
+                    }
+                } else if (el.shape === "wedgeRoundRectCallout") {
+                    var pointLeftThumb = (el.x || 0) > 0.5;
+                    var callDataThumb = createWedgeRoundRectCalloutDataUrl(
+                        el.w * TW,
+                        el.h * TH,
+                        el.fillColor || "#FFFFFF",
+                        "#888",
+                        1,
+                        pointLeftThumb
+                    );
+                    if (callDataThumb) {
+                        var sb = new BABYLON.GUI.Rectangle();
+                        sb.width = (el.w * TW) + "px"; sb.height = (el.h * TH) + "px";
+                        sb.left = (el.x * TW) + "px"; sb.top = (el.y * TH) + "px";
+                        sb.thickness = 0; sb.background = "transparent";
+                        sb.horizontalAlignment = BABYLON.GUI.Control.HORIZONTAL_ALIGNMENT_LEFT;
+                        sb.verticalAlignment = BABYLON.GUI.Control.VERTICAL_ALIGNMENT_TOP;
+                        if (el.rotation) sb.rotation = el.rotation * Math.PI / 180;
+                        var bimg = new BABYLON.GUI.Image("th_call_" + idx + "_" + Math.random().toString(36).substr(2, 4), callDataThumb);
+                        bimg.stretch = BABYLON.GUI.Image.STRETCH_FILL;
+                        sb.addControl(bimg);
+                        th.addControl(sb);
                     }
                 } else {
                     var sr = new BABYLON.GUI.Rectangle();
