@@ -24,16 +24,66 @@ export async function parseRelsFile(zip, relsPath) {
 }
 
 // Resolve image from zip given base path and target
+// Convert SVG text to a PNG data URL via an off-screen canvas.
+// This avoids Babylon.js rendering issues with SVGs that lack explicit width/height attrs.
+async function svgToPngDataUrl(svgText) {
+    // Extract dimensions from viewBox if explicit attrs are absent
+    var width = 96, height = 96;
+    var vbMatch = svgText.match(/viewBox\s*=\s*["']([^"']+)["']/);
+    if (vbMatch) {
+        var vb = vbMatch[1].trim().split(/[\s,]+/);
+        if (vb.length >= 4) {
+            width  = Math.round(parseFloat(vb[2])) || 96;
+            height = Math.round(parseFloat(vb[3])) || 96;
+        }
+    }
+    // Inject width/height so browsers give the SVG intrinsic dimensions
+    if (!/\s+width=/.test(svgText)) {
+        svgText = svgText.replace(/<svg(\s|\b)/, '<svg width="' + width + '" height="' + height + '" ');
+    }
+
+    return new Promise(function (resolve) {
+        var SCALE = 2; // Render at 2× for sharper icons
+        var canvas = document.createElement("canvas");
+        canvas.width  = width  * SCALE;
+        canvas.height = height * SCALE;
+        var ctx = canvas.getContext("2d");
+
+        var svgBlob = new Blob([svgText], { type: "image/svg+xml" });
+        var url = URL.createObjectURL(svgBlob);
+        var img = new Image();
+
+        img.onload = function () {
+            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+            URL.revokeObjectURL(url);
+            resolve(canvas.toDataURL("image/png"));
+        };
+        img.onerror = function () {
+            URL.revokeObjectURL(url);
+            // Fall back: return SVG data URL directly
+            var rd = new FileReader();
+            rd.onload = function () { resolve(rd.result); };
+            rd.onerror = function () { resolve(null); };
+            rd.readAsDataURL(svgBlob);
+        };
+        img.src = url;
+    });
+}
+
 export async function loadImageAsDataUrl(zip, basePath, target) {
     if (!target) return null;
     var fullPath = (basePath + target).replace(/[^/]+\/\.\.\//g, "");
     var f = zip.file(fullPath);
     if (!f) return null;
     try {
-        var blob = await f.async("blob");
         var ext = fullPath.split(".").pop().toLowerCase();
+        if (ext === "svg") {
+            var svgText = await f.async("string");
+            return await svgToPngDataUrl(svgText);
+        }
+        var blob = await f.async("blob");
         var mime = (ext === "jpg" || ext === "jpeg") ? "image/jpeg" :
-            ext === "gif" ? "image/gif" : ext === "svg" ? "image/svg+xml" : "image/png";
+            ext === "gif" ? "image/gif" : "image/png";
         return await new Promise(function (res) {
             var rd = new FileReader();
             rd.onload = function () { res(rd.result); };
