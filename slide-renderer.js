@@ -61,6 +61,49 @@ function createChevronDataUrl(widthPx, heightPx, fillColor, strokeColor, strokeW
     return canvas.toDataURL("image/png");
 }
 
+function createRightArrowDataUrl(widthPx, heightPx, fillColor, strokeColor, strokeWidth) {
+    var w = Math.max(8, Math.round(widthPx));
+    var h = Math.max(8, Math.round(heightPx));
+    var canvas = document.createElement("canvas");
+    canvas.width = w;
+    canvas.height = h;
+    var ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+
+    // Approximate PPT rightArrow preset with a rectangular tail and triangular head.
+    var headW = Math.max(4, Math.round(w * 0.38));
+    var shaftH = Math.max(4, Math.round(h * 0.52));
+    var yTop = Math.round((h - shaftH) / 2);
+    var yBottom = yTop + shaftH;
+    var tailRight = Math.max(2, w - headW);
+    var midY = Math.round(h / 2);
+
+    ctx.beginPath();
+    ctx.moveTo(0, yTop);
+    ctx.lineTo(tailRight, yTop);
+    ctx.lineTo(tailRight, 0);
+    ctx.lineTo(w, midY);
+    ctx.lineTo(tailRight, h);
+    ctx.lineTo(tailRight, yBottom);
+    ctx.lineTo(0, yBottom);
+    ctx.closePath();
+
+    var hasFill = fillColor && fillColor !== "transparent";
+    if (hasFill) {
+        ctx.fillStyle = fillColor;
+        ctx.fill();
+    }
+
+    var hasStroke = strokeColor && strokeColor !== "transparent";
+    if (hasStroke && strokeWidth > 0) {
+        ctx.lineWidth = strokeWidth;
+        ctx.strokeStyle = strokeColor;
+        ctx.stroke();
+    }
+
+    return canvas.toDataURL("image/png");
+}
+
 function normalizeDeg(value) {
     var d = Number(value);
     if (!Number.isFinite(d)) return 0;
@@ -214,6 +257,24 @@ export function renderSlide(app) {
                     che.addControl(cheImg);
                 }
                 sLayer.addControl(che);
+            } else if (el.shape === "rightArrow") {
+                var arrStrokeW = el.thickness !== undefined ? el.thickness : (el.borderWidth || 0);
+                var arrStrokeColor = el.strokeColor || el.borderColor || "transparent";
+                var arr = new BABYLON.GUI.Rectangle();
+                arr.left = (el.x * CANVAS_W) + "px"; arr.top = (el.y * CANVAS_H) + "px";
+                arr.width = (el.w * CANVAS_W) + "px"; arr.height = (el.h * CANVAS_H) + "px";
+                arr.thickness = 0; arr.background = "transparent";
+                arr.horizontalAlignment = BABYLON.GUI.Control.HORIZONTAL_ALIGNMENT_LEFT;
+                arr.verticalAlignment = BABYLON.GUI.Control.VERTICAL_ALIGNMENT_TOP;
+                if (el.rotation) arr.rotation = el.rotation * Math.PI / 180;
+
+                var arrData = createRightArrowDataUrl(el.w * CANVAS_W, el.h * CANVAS_H, el.fillColor || "transparent", arrStrokeColor, arrStrokeW);
+                if (arrData) {
+                    var arrImg = new BABYLON.GUI.Image("arr_" + Math.random(), arrData);
+                    arrImg.stretch = BABYLON.GUI.Image.STRETCH_FILL;
+                    arr.addControl(arrImg);
+                }
+                sLayer.addControl(arr);
             } else {
                 var rectStrokeW = el.thickness !== undefined ? el.thickness : (el.borderWidth || 0);
                 var rectStrokeColor = el.strokeColor || el.borderColor || "transparent";
@@ -318,6 +379,21 @@ export function buildThumbnails(app) {
                         simg.stretch = BABYLON.GUI.Image.STRETCH_FILL;
                         sc.addControl(simg);
                         th.addControl(sc);
+                    }
+                } else if (el.shape === "rightArrow") {
+                    var arrDataThumb = createRightArrowDataUrl(el.w * TW, el.h * TH, el.fillColor || "transparent", "transparent", 0);
+                    if (arrDataThumb) {
+                        var sa = new BABYLON.GUI.Rectangle();
+                        sa.width = (el.w * TW) + "px"; sa.height = (el.h * TH) + "px";
+                        sa.left = (el.x * TW) + "px"; sa.top = (el.y * TH) + "px";
+                        sa.thickness = 0; sa.background = "transparent";
+                        sa.horizontalAlignment = BABYLON.GUI.Control.HORIZONTAL_ALIGNMENT_LEFT;
+                        sa.verticalAlignment = BABYLON.GUI.Control.VERTICAL_ALIGNMENT_TOP;
+                        if (el.rotation) sa.rotation = el.rotation * Math.PI / 180;
+                        var sarr = new BABYLON.GUI.Image("th_arr_" + idx + "_" + Math.random().toString(36).substr(2, 4), arrDataThumb);
+                        sarr.stretch = BABYLON.GUI.Image.STRETCH_FILL;
+                        sa.addControl(sarr);
+                        th.addControl(sa);
                     }
                 } else {
                     var sr = new BABYLON.GUI.Rectangle();
