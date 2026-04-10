@@ -15,6 +15,15 @@ function colorLuma(hex) {
     return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
 }
 
+function isNeutralGray(hex) {
+    if (!hex || hex.charAt(0) !== "#" || hex.length !== 7) return false;
+    var r = parseInt(hex.substr(1, 2), 16);
+    var g = parseInt(hex.substr(3, 2), 16);
+    var b = parseInt(hex.substr(5, 2), 16);
+    if (!Number.isFinite(r) || !Number.isFinite(g) || !Number.isFinite(b)) return false;
+    return Math.abs(r - g) < 12 && Math.abs(g - b) < 12;
+}
+
 function txBodyHasExplicitColor(txBody) {
     if (!txBody) return false;
     // Check for explicit run properties with solidFill
@@ -62,6 +71,7 @@ function parseShapeTree(spTreeNode, slideW, slideH, images, relsAll, opts) {
     var elements = [];
     var skipPlaceholders = opts.skipPlaceholders || false;
     var hasBgImage = opts.hasBgImage || false;
+    var bgImageRid = opts.bgImageRid || null;
     var layoutStyles = opts.layoutStyles || {};
     var chartDataMap = opts.chartDataMap || {};
     var diagramDataMap = opts.diagramDataMap || {};
@@ -107,7 +117,7 @@ function parseShapeTree(spTreeNode, slideW, slideH, images, relsAll, opts) {
         }
         // --- pic (picture) ---
         else if (localName === "pic") {
-            parsePic(child, elements, slideW, slideH, images, relsAll, hasBgImage, toFracX, toFracY, toFracW, toFracH);
+            parsePic(child, elements, slideW, slideH, images, relsAll, hasBgImage, bgImageRid, toFracX, toFracY, toFracW, toFracH);
         }
         // --- cxnSp (connector) ---
         else if (localName === "cxnSp") {
@@ -231,6 +241,9 @@ function parseSp(sp, elements, slideW, slideH, skipPH, defTextColor, fx, fy, fw,
         // User request: make callout text about 0.85x.
         phFS = Math.max(10, Math.round(phFS * 0.85));
     }
+    // Apply layout default text color first, then fontRef/style overrides.
+    // Keep bg-image subtitle default unless text/style explicitly sets a stronger signal.
+    if (phLayout && phLayout.color && !(hasBgImage && phType === "subTitle")) phFC = phLayout.color;
     // Apply layout fontRef color as default, then slide's own style overrides
     if (phLayout && phLayout.fontRefColor) phFC = phLayout.fontRefColor;
     if (styleFontColor) phFC = styleFontColor;
@@ -258,6 +271,12 @@ function parseSp(sp, elements, slideW, slideH, skipPH, defTextColor, fx, fy, fw,
             themeColors.tx1 !== "#000000" && colorLuma(themeColors.tx1) > 0.3) {
             console.log("[SP] BG-image title: using theme tx1 instead of white: " + themeColors.tx1);
             phFC = themeColors.tx1;
+        }
+    }
+
+    if (hasBgImage && phType === "subTitle" && !txBodyHasExplicitColor(txBody)) {
+        if (isNeutralGray(phFC) || colorLuma(phFC) > 0.72) {
+            phFC = themeColors.hlink || themeColors.accent1 || phFC;
         }
     }
 
@@ -376,21 +395,37 @@ function parseSp(sp, elements, slideW, slideH, skipPH, defTextColor, fx, fy, fw,
 }
 
 // --- Parse pic (picture) ---
-function parsePic(pic, elements, slideW, slideH, images, relsAll, hasBgImage, fx, fy, fw, fh) {
+function parsePic(pic, elements, slideW, slideH, images, relsAll, hasBgImage, bgImageRid, fx, fy, fw, fh) {
     var xfrm = pic.getElementsByTagNameNS(A_NS, "xfrm")[0]; if (!xfrm) return;
     var off = xfrm.getElementsByTagNameNS(A_NS, "off")[0];
     var ext = xfrm.getElementsByTagNameNS(A_NS, "ext")[0];
     if (!off || !ext) return;
     var ox = parseInt(off.getAttribute("x")) || 0, oy = parseInt(off.getAttribute("y")) || 0;
     var cx = parseInt(ext.getAttribute("cx")) || 0, cy = parseInt(ext.getAttribute("cy")) || 0;
-
-    // Skip full-bleed background images (already handled)
-    if (hasBgImage && cx > slideW * 0.7 && cy > slideH * 0.7) return;
+    var rotDeg = (parseInt(xfrm.getAttribute("rot")) || 0) / 60000;
+    var flipH = xfrm.getAttribute("flipH") === "1";
+    var flipV = xfrm.getAttribute("flipV") === "1";
 
     var blip = pic.getElementsByTagNameNS(A_NS, "blip")[0];
     if (!blip) return;
     var rId = blip.getAttribute("r:embed") || blip.getAttributeNS(R_NS, "embed");
     if (!rId || !images[rId]) return;
+
+    // Prefer exact relId matching when background image source is known.
+    if (hasBgImage && bgImageRid && rId === bgImageRid) {
+        console.log("[PIC] skip duplicate bg image rId=" + rId);
+        return;
+    }
+
+    // Fallback heuristic for legacy cases where bg relId is unavailable.
+    if (hasBgImage && !bgImageRid) {
+        var right = ox + cx;
+        var bottom = oy + cy;
+        var almostFullSize = (cx >= slideW * 0.95) && (cy >= slideH * 0.95);
+        var nearTopLeft = (ox <= slideW * 0.03) && (oy <= slideH * 0.03);
+        var nearBottomRight = (right >= slideW * 0.97) && (bottom >= slideH * 0.97);
+        if (almostFullSize && nearTopLeft && nearBottomRight) return;
+    }
 
     // srcRect (crop) - approximate by adjusting position/size
     var fracX = fx(ox), fracY = fy(oy), fracW = fw(cx), fracH = fh(cy);
@@ -406,13 +441,24 @@ function parsePic(pic, elements, slideW, slideH, images, relsAll, hasBgImage, fx
         }
     }
 
+    var opacity = 1;
+    var alphaModFix = blip.getElementsByTagNameNS(A_NS, "alphaModFix")[0];
+    if (alphaModFix) {
+        var amt = parseInt(alphaModFix.getAttribute("amt") || "100000", 10);
+        if (Number.isFinite(amt)) opacity = Math.max(0, Math.min(1, amt / 100000));
+    }
+
     var imgDataUrl = images[rId];
     elements.push(normalizeElement({
         type: "image", dataUrl: imgDataUrl,
         x: fracX, y: fracY, w: fracW, h: fracH,
+        rotation: rotDeg,
+        flipH: flipH,
+        flipV: flipV,
+        alpha: opacity,
         crop: { l: cropL, t: cropT, r: cropR, b: cropB }
     }));
-    console.log("[PIC] image at (" + fracX.toFixed(3) + "," + fracY.toFixed(3) + ") size=(" + fracW.toFixed(3) + "," + fracH.toFixed(3) + ") crop=L" + (cropL*100).toFixed(0) + "%,T" + (cropT*100).toFixed(0) + "%,R" + (cropR*100).toFixed(0) + "%,B" + (cropB*100).toFixed(0) + "%");
+    console.log("[PIC] rId=" + rId + " image at (" + fracX.toFixed(3) + "," + fracY.toFixed(3) + ") size=(" + fracW.toFixed(3) + "," + fracH.toFixed(3) + ") rot=" + rotDeg.toFixed(2) + " flipH=" + flipH + " flipV=" + flipV + " alpha=" + opacity.toFixed(2) + " crop=L" + (cropL*100).toFixed(0) + "%,T" + (cropT*100).toFixed(0) + "%,R" + (cropR*100).toFixed(0) + "%,B" + (cropB*100).toFixed(0) + "%");
 }
 
 // --- Parse cxnSp (connector line) ---
@@ -483,6 +529,7 @@ function parseGrpSp(grpSp, elements, slideW, slideH, images, relsAll, parentOpts
     var childOpts = {
         skipPlaceholders: parentOpts ? parentOpts.skipPlaceholders : false,
         hasBgImage: parentOpts ? parentOpts.hasBgImage : false,
+        bgImageRid: parentOpts ? (parentOpts.bgImageRid || null) : null,
         layoutStyles: parentOpts ? (parentOpts.layoutStyles || {}) : {},
         chartDataMap: parentOpts ? (parentOpts.chartDataMap || {}) : {},
         diagramDataMap: parentOpts ? (parentOpts.diagramDataMap || {}) : {},

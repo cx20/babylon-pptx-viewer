@@ -3,7 +3,7 @@
 // ============================================================================
 
 import { A_NS } from "./constants.js";
-import { resolveColor } from "./color-utils.js";
+import { resolveColor, themeColors } from "./color-utils.js";
 
 export function emuToFontPx(hundredthsPt) {
     return Math.round(hundredthsPt / 100 * 0.75);
@@ -85,6 +85,39 @@ export function parseParagraphs(txBody, defaultFS, defaultFC, layoutCap) {
 
         var txt = "";
         var lineBreakPositions = []; // text offsets where <a:br/> elements occurred
+
+        function applyRunProps(rPr) {
+            if (!rPr) return;
+            var rsz = rPr.getAttribute("sz");
+            if (rsz) { var rfs = emuToFontPx(parseInt(rsz)); if (rfs > fs) fs = rfs; }
+            if (rPr.getAttribute("b") === "1") fw = "bold";
+            if (rPr.getAttribute("i") === "1") fi = true;
+            if (rPr.getAttribute("cap") && !cap) cap = rPr.getAttribute("cap");
+
+            var runHasExplicitColor = false;
+            var rsf = rPr.getElementsByTagNameNS(A_NS, "solidFill")[0];
+            if (rsf) {
+                var rc = resolveColor(rsf);
+                if (rc) {
+                    fc = rc;
+                    runHasExplicitColor = true;
+                }
+            }
+
+            // Hyperlink runs usually use theme hyperlink color when no explicit fill exists.
+            if (!runHasExplicitColor) {
+                var hlink = rPr.getElementsByTagNameNS(A_NS, "hlinkClick")[0];
+                var folHlink = rPr.getElementsByTagNameNS(A_NS, "hlinkMouseOver")[0];
+                if (hlink && themeColors.hlink) fc = themeColors.hlink;
+                else if (folHlink && themeColors.folHlink) fc = themeColors.folHlink;
+            }
+        }
+
+        function appendRunTextFrom(node) {
+            var t = node.getElementsByTagNameNS(A_NS, "t")[0];
+            if (t) txt += normalizeRunText(t.textContent);
+        }
+
         for (var ci = 0; ci < para.childNodes.length; ci++) {
             var child = para.childNodes[ci];
             if (child.nodeType !== 1) continue;
@@ -93,17 +126,13 @@ export function parseParagraphs(txBody, defaultFS, defaultFC, layoutCap) {
                 lineBreakPositions.push(txt.length);
             } else if (child.localName === "r" && child.namespaceURI === A_NS) {
                 var rPr = child.getElementsByTagNameNS(A_NS, "rPr")[0];
-                if (rPr) {
-                    var rsz = rPr.getAttribute("sz");
-                    if (rsz) { var rfs = emuToFontPx(parseInt(rsz)); if (rfs > fs) fs = rfs; }
-                    if (rPr.getAttribute("b") === "1") fw = "bold";
-                    if (rPr.getAttribute("i") === "1") fi = true;
-                    if (rPr.getAttribute("cap") && !cap) cap = rPr.getAttribute("cap");
-                    var rsf = rPr.getElementsByTagNameNS(A_NS, "solidFill")[0];
-                    if (rsf) { var rc = resolveColor(rsf); if (rc) fc = rc; }
-                }
-                var t = child.getElementsByTagNameNS(A_NS, "t")[0];
-                if (t) txt += normalizeRunText(t.textContent);
+                applyRunProps(rPr);
+                appendRunTextFrom(child);
+            } else if (child.localName === "fld" && child.namespaceURI === A_NS) {
+                // Fields (slide numbers, hyperlinks, etc.) carry text/rPr similar to runs.
+                var fPr = child.getElementsByTagNameNS(A_NS, "rPr")[0];
+                applyRunProps(fPr);
+                appendRunTextFrom(child);
             }
         }
 

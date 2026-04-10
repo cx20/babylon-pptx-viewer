@@ -9,15 +9,6 @@ import { loadImageAsDataUrl, parseRelsFile } from "./zip-helpers.js";
 function detectBlipTint(blip, fallbackColor) {
     if (!blip) return null;
 
-    // Search entire blip subtree for known art-effect URI.
-    var allEls = blip.getElementsByTagName("*");
-    for (var i = 0; i < allEls.length; i++) {
-        var uri = (allEls[i].getAttribute("uri") || "").toUpperCase();
-        if (uri.indexOf("BEBA8EAE") !== -1) {
-            return { type: "artEffect", color: fallbackColor || themeColors.dk2 || "#0E5580" };
-        }
-    }
-
     var duotone = null;
     for (var di = 0; di < blip.childNodes.length; di++) {
         if (blip.childNodes[di].nodeType === 1 && blip.childNodes[di].localName === "duotone") {
@@ -217,7 +208,8 @@ export async function extractBackground(xmlStr, zip, basePath, relsAll, slideW, 
                         var img = await loadImageAsDataUrl(zip, basePath, relsAll[rId]);
                         if (img) {
                             var tint = detectBlipTint(blip, themeColors.dk2 || "#0E5580");
-                            return tint ? { image: img, bgTint: tint } : img;
+                            if (tint) return { image: img, bgTint: tint, bgImageRid: rId };
+                            return { image: img, bgImageRid: rId };
                         }
                     }
                 }
@@ -255,14 +247,25 @@ export async function extractBackground(xmlStr, zip, basePath, relsAll, slideW, 
         var off = xfrm.getElementsByTagNameNS(A_NS, "off")[0];
         var ext = xfrm.getElementsByTagNameNS(A_NS, "ext")[0];
         if (!off || !ext) continue;
+        var ox = parseInt(off.getAttribute("x")) || 0;
+        var oy = parseInt(off.getAttribute("y")) || 0;
         var cx = parseInt(ext.getAttribute("cx")) || 0, cy = parseInt(ext.getAttribute("cy")) || 0;
-        if (cx > slideW * 0.7 && cy > slideH * 0.7) {
+
+        // Treat as background only when the picture is effectively full-bleed.
+        // A large centered image (e.g. poster/photo content) should remain a normal element.
+        var right = ox + cx;
+        var bottom = oy + cy;
+        var almostFullSize = (cx >= slideW * 0.95) && (cy >= slideH * 0.95);
+        var nearTopLeft = (ox <= slideW * 0.03) && (oy <= slideH * 0.03);
+        var nearBottomRight = (right >= slideW * 0.97) && (bottom >= slideH * 0.97);
+
+        if (almostFullSize && nearTopLeft && nearBottomRight) {
             var blip = pic.getElementsByTagNameNS(A_NS, "blip")[0];
             if (blip) {
                 var rId = blip.getAttribute("r:embed") || blip.getAttributeNS(R_NS, "embed");
                 if (rId && relsAll[rId]) {
                     var img = await loadImageAsDataUrl(zip, basePath, relsAll[rId]);
-                    if (img) return img;
+                    if (img) return { image: img, bgImageRid: rId };
                 }
             }
         }
