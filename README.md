@@ -122,6 +122,20 @@ Slide geometry is normalized as x, y, w, h in the range 0.0 to 1.0.
 
 ## Logs And Debugging
 
+By default, verbose parser/render debug logs are suppressed to keep console output lightweight.
+
+To enable full debug logs in development, run this in DevTools Console before loading a PPTX:
+
+```js
+window.__PPTX_DEBUG__ = true;
+```
+
+To disable again:
+
+```js
+window.__PPTX_DEBUG__ = false;
+```
+
 Common log prefixes:
 
 | Prefix | Purpose |

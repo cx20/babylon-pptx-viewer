@@ -8,6 +8,23 @@ import { buildGuiFrame } from "./gui-frame.js";
 import { parsePptx } from "./pptx-parser.js";
 import { renderSlide, buildThumbnails, updateThumbs, updateNotes, updateStatus } from "./slide-renderer.js";
 
+// Suppress verbose parser/render debug logs in production.
+// Enable full logs by setting window.__PPTX_DEBUG__ = true in DevTools.
+(function configureDebugLogging() {
+    if (typeof window === "undefined" || !window.console || typeof window.console.log !== "function") return;
+    if (window.__PPTX_DEBUG__) return;
+
+    var rawLog = window.console.log.bind(window.console);
+    var debugPrefixes = /^(\[PPTX\]|\[RENDER\]|\[SP\]|\[TREE\]|\[PIC\]|\[BG\]|\[BLIP\]|\[LAYOUT\]|\[MASTER\]|\[GRPSP\]|\[GF\]|\[SmartArt\]|\[TBL\]|\[CXN\]|\[INIT\/ENGINE\]|\[INIT\/SCENE\]|\[INIT\/UI\]|\[INIT\/INPUT\]|\[INIT\/JSZIP\]|\[INIT\] boot sequence)/;
+
+    window.console.log = function () {
+        if (arguments.length > 0 && typeof arguments[0] === "string" && debugPrefixes.test(arguments[0])) {
+            return;
+        }
+        return rawLog.apply(window.console, arguments);
+    };
+})();
+
 var canvas = document.getElementById("renderCanvas");
 
 var AppError = function(code, userMsg, devMsg) {
