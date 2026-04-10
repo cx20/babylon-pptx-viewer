@@ -404,7 +404,8 @@ async function parsePptx(arrayBuffer) {
         }
 
         var hasBgImage = !!(bgResult && (typeof bgResult === "string" || (typeof bgResult === "object" && !!bgResult.image)));
-        console.log("[PPTX] Slide " + sf.num + " hasBgImage=" + hasBgImage);
+        var bgImageRid = (bgResult && typeof bgResult === "object" && bgResult.bgImageRid) ? bgResult.bgImageRid : null;
+        console.log("[PPTX] Slide " + sf.num + " hasBgImage=" + hasBgImage + " bgImageRid=" + (bgImageRid || "none"));
 
         // Parse slide shapes
         console.log("[PPTX] Parsing slide " + sf.num + " shapes...");
@@ -425,9 +426,9 @@ async function parsePptx(arrayBuffer) {
         // Body/other text should still inherit master colors on bg-image slides.
         if (masterTxStyles.bodyColor) {
             if (!layoutStyles.subTitle) layoutStyles.subTitle = {};
-            if (!layoutStyles.subTitle.fontRefColor) layoutStyles.subTitle.fontRefColor = masterTxStyles.bodyColor;
+            if (!layoutStyles.subTitle.fontRefColor && !layoutStyles.subTitle.color) layoutStyles.subTitle.fontRefColor = masterTxStyles.bodyColor;
             if (!layoutStyles.body) layoutStyles.body = {};
-            if (!layoutStyles.body.fontRefColor) layoutStyles.body.fontRefColor = masterTxStyles.bodyColor;
+            if (!layoutStyles.body.fontRefColor && !layoutStyles.body.color) layoutStyles.body.fontRefColor = masterTxStyles.bodyColor;
         }
         if (masterTxStyles.otherColor) {
             if (!layoutStyles[""]) layoutStyles[""] = {};
@@ -449,9 +450,9 @@ async function parsePptx(arrayBuffer) {
         // Map master 'body' fontRef to 'subTitle' if subTitle doesn't have its own
         if (masterTxStyles.phFontRef.body && (!layoutStyles.subTitle || !layoutStyles.subTitle.fontRefColor)) {
             if (!layoutStyles.subTitle) layoutStyles.subTitle = {};
-            layoutStyles.subTitle.fontRefColor = masterTxStyles.phFontRef.body;
+            if (!layoutStyles.subTitle.color) layoutStyles.subTitle.fontRefColor = masterTxStyles.phFontRef.body;
         }
-        var parsed = parseSlideXml(xmlStr, slideW, slideH, images, slideRels.all, hasBgImage, false, layoutStyles, chartDataMap, diagramDataMap, "slide");
+        var parsed = parseSlideXml(xmlStr, slideW, slideH, images, slideRels.all, hasBgImage, bgImageRid, false, layoutStyles, chartDataMap, diagramDataMap, "slide");
         console.log("[PPTX] Slide " + sf.num + " own elements: " + parsed.elements.length);
 
         // Parse layout shapes (non-placeholder decorations only)
@@ -464,7 +465,7 @@ async function parsePptx(arrayBuffer) {
                 var layoutRels2 = await parseRelsFile(zip, layoutPath2.replace(/([^/]+)$/, "_rels/$1.rels"));
                 var layoutImgs = await buildImageMap(zip, layoutBase2, layoutRels2.images);
                 var layoutParsed = parseSlideXml(
-                    await layoutFile.async("string"), slideW, slideH, layoutImgs, layoutRels2.all, hasBgImage, true, {}, {}, {}, "layout"
+                    await layoutFile.async("string"), slideW, slideH, layoutImgs, layoutRels2.all, hasBgImage, null, true, {}, {}, {}, "layout"
                 );
                 console.log("[PPTX]   layout contributed " + layoutParsed.elements.length + " elements");
                 parsed.elements = layoutParsed.elements.concat(parsed.elements);
@@ -481,7 +482,7 @@ async function parsePptx(arrayBuffer) {
                     var masterRels2 = await parseRelsFile(zip, masterPath2.replace(/([^/]+)$/, "_rels/$1.rels"));
                     var masterImgs = await buildImageMap(zip, masterBase2, masterRels2.images);
                     var masterParsed = parseSlideXml(
-                        await masterFile.async("string"), slideW, slideH, masterImgs, masterRels2.all, hasBgImage, true, {}, {}, {}, "master"
+                        await masterFile.async("string"), slideW, slideH, masterImgs, masterRels2.all, hasBgImage, null, true, {}, {}, {}, "master"
                     );
                     console.log("[PPTX]   master contributed " + masterParsed.elements.length + " elements");
                     parsed.elements = masterParsed.elements.concat(parsed.elements);

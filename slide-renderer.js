@@ -10,7 +10,11 @@ function applyTintOverlay(container, bgTint, name) {
     var tintRect = new BABYLON.GUI.Rectangle(name);
     tintRect.width = "100%"; tintRect.height = "100%"; tintRect.thickness = 0;
     if (bgTint.type === "duotone") { tintRect.background = bgTint.dark; tintRect.alpha = 0.55; }
-    else if (bgTint.type === "artEffect") { tintRect.background = bgTint.color; tintRect.alpha = 0.40; }
+    else if (bgTint.type === "artEffect") {
+        // artEffect approximation can over-blue many templates; keep it subtle.
+        tintRect.background = bgTint.color;
+        tintRect.alpha = 0.04;
+    }
     else if (bgTint.type === "tint") { tintRect.background = bgTint.color; tintRect.alpha = 0.5; }
     else if (bgTint.type === "alpha") { tintRect.background = "#000000"; tintRect.alpha = 1.0 - bgTint.amt; }
     else return;
@@ -273,6 +277,42 @@ function renderTextElement(el, container, canvasW, canvasH, fontScale) {
     container.addControl(tb);
 }
 
+// Flip an image using canvas (horizontal or vertical flip)
+function getFlippedImageDataUrl(sourceDataUrl, flipH, flipV) {
+    return new Promise(function(resolve, reject) {
+        var img = new Image();
+        img.onload = function() {
+            var canvas = document.createElement("canvas");
+            canvas.width = img.width;
+            canvas.height = img.height;
+            var ctx = canvas.getContext("2d");
+            
+            // Apply flip transforms
+            if (flipH || flipV) {
+                ctx.translate(flipH ? canvas.width : 0, flipV ? canvas.height : 0);
+                ctx.scale(flipH ? -1 : 1, flipV ? -1 : 1);
+            }
+            ctx.drawImage(img, 0, 0);
+            resolve(canvas.toDataURL("image/jpeg", 0.9));
+        };
+        img.onerror = function() {
+            reject(new Error("Failed to load image for flipping"));
+        };
+        img.src = sourceDataUrl;
+    });
+}
+
+function getEffectiveImageAlpha(el, slideHasBgImage) {
+    var alpha = (typeof el.alpha === "number") ? Math.max(0, Math.min(1, el.alpha)) : 1;
+    // Readability guard: full-slide decorative overlays can wash out text too much
+    // when rendered with plain alpha blending.
+    var isNearFullSlide = el.x <= 0.01 && el.y <= 0.01 && el.w >= 0.99 && el.h >= 0.99;
+    if (slideHasBgImage && isNearFullSlide && alpha < 1) {
+        alpha = Math.min(alpha, 0.18);
+    }
+    return alpha;
+}
+
 // Render the current slide onto the main canvas
 export function renderSlide(app) {
     if (app.scene.isDisposed) return;
@@ -416,20 +456,39 @@ export function renderSlide(app) {
                 sLayer.addControl(rect);
             }
         } else if (el.type === "image") {
-            var ir = new BABYLON.GUI.Rectangle();
-            ir.left = (el.x * CANVAS_W) + "px"; ir.top = (el.y * CANVAS_H) + "px";
-            ir.width = (el.w * CANVAS_W) + "px"; ir.height = (el.h * CANVAS_H) + "px";
-            ir.thickness = 0;
-            ir.horizontalAlignment = BABYLON.GUI.Control.HORIZONTAL_ALIGNMENT_LEFT;
-            ir.verticalAlignment = BABYLON.GUI.Control.VERTICAL_ALIGNMENT_TOP;
-            var img = new BABYLON.GUI.Image("i_" + Math.random(), el.dataUrl);
-            img.stretch = BABYLON.GUI.Image.STRETCH_FILL;
-            ir.addControl(img); sLayer.addControl(ir);
+            console.log("[RENDER] image: pos=(" + el.x.toFixed(3) + "," + el.y.toFixed(3) + ") size=(" + el.w.toFixed(3) + "," + el.h.toFixed(3) + ") rotation=" + (el.rotation || 0) + " flipH=" + (el.flipH ? "yes" : "no") + " flipV=" + (el.flipV ? "yes" : "no") + " alpha=" + (el.alpha || 1.0));
+            // Use flipped image data URL if flip is requested
+            var imgUrl = el.dataUrl;
+            if (el.flipH || el.flipV) {
+                getFlippedImageDataUrl(el.dataUrl, el.flipH, el.flipV).then(function(flippedUrl) {
+                    imgUrl = flippedUrl;
+                    renderImageElement(el, imgUrl, sLayer, !!slide.bgImage);
+                }).catch(function(err) {
+                    console.log("[RENDER] flip failed, using unflipped: " + err.message);
+                    renderImageElement(el, el.dataUrl, sLayer, !!slide.bgImage);
+                });
+            } else {
+                renderImageElement(el, imgUrl, sLayer, !!slide.bgImage);
+            }
         } else if (el.type === "text") {
             console.log("[RENDER] text: '" + el.text.substring(0, 30) + "' left=" + (el.x * CANVAS_W).toFixed(1) + " top=" + (el.y * CANVAS_H).toFixed(1) + " w=" + (el.w ? el.w * CANVAS_W : "-").toString() + " fs=" + el.fontSize + " color=" + el.color);
             renderTextElement(el, sLayer, CANVAS_W, CANVAS_H, FONT_SCALE);
         }
     });
+}
+
+function renderImageElement(el, imgUrl, container, slideHasBgImage) {
+    var ir = new BABYLON.GUI.Rectangle();
+    ir.left = (el.x * CANVAS_W) + "px"; ir.top = (el.y * CANVAS_H) + "px";
+    ir.width = (el.w * CANVAS_W) + "px"; ir.height = (el.h * CANVAS_H) + "px";
+    ir.thickness = 0;
+    ir.horizontalAlignment = BABYLON.GUI.Control.HORIZONTAL_ALIGNMENT_LEFT;
+    ir.verticalAlignment = BABYLON.GUI.Control.VERTICAL_ALIGNMENT_TOP;
+    if (el.rotation) ir.rotation = el.rotation * Math.PI / 180;
+    var img = new BABYLON.GUI.Image("i_" + Math.random(), imgUrl);
+    img.stretch = BABYLON.GUI.Image.STRETCH_FILL;
+    img.alpha = getEffectiveImageAlpha(el, !!slideHasBgImage);
+    ir.addControl(img); container.addControl(ir);
 }
 
 // Build slide thumbnails in the sidebar
@@ -554,15 +613,31 @@ export function buildThumbnails(app) {
                 }
             }
             if (el.type === "image" && el.dataUrl) {
-                var ic = new BABYLON.GUI.Rectangle();
-                ic.width = (el.w * TW) + "px"; ic.height = (el.h * TH) + "px";
-                ic.left = (el.x * TW) + "px"; ic.top = (el.y * TH) + "px";
-                ic.thickness = 0;
-                ic.horizontalAlignment = BABYLON.GUI.Control.HORIZONTAL_ALIGNMENT_LEFT;
-                ic.verticalAlignment = BABYLON.GUI.Control.VERTICAL_ALIGNMENT_TOP;
-                var im = new BABYLON.GUI.Image("ti_" + idx + "_" + Math.random().toString(36).substr(2, 4), el.dataUrl);
-                im.stretch = BABYLON.GUI.Image.STRETCH_FILL; ic.addControl(im);
-                th.addControl(ic);
+                var thumbImgUrl = el.dataUrl;
+                var renderThumbImage = function(url) {
+                    var ic = new BABYLON.GUI.Rectangle();
+                    ic.width = (el.w * TW) + "px"; ic.height = (el.h * TH) + "px";
+                    ic.left = (el.x * TW) + "px"; ic.top = (el.y * TH) + "px";
+                    ic.thickness = 0;
+                    ic.horizontalAlignment = BABYLON.GUI.Control.HORIZONTAL_ALIGNMENT_LEFT;
+                    ic.verticalAlignment = BABYLON.GUI.Control.VERTICAL_ALIGNMENT_TOP;
+                    if (el.rotation) ic.rotation = el.rotation * Math.PI / 180;
+                    var im = new BABYLON.GUI.Image("ti_" + idx + "_" + Math.random().toString(36).substr(2, 4), url);
+                    im.stretch = BABYLON.GUI.Image.STRETCH_FILL;
+                    if (typeof el.alpha === "number") im.alpha = Math.max(0, Math.min(1, el.alpha));
+                    ic.addControl(im);
+                    th.addControl(ic);
+                };
+                if (el.flipH || el.flipV) {
+                    getFlippedImageDataUrl(el.dataUrl, el.flipH, el.flipV).then(function(flippedUrl) {
+                        renderThumbImage(flippedUrl);
+                    }).catch(function(err) {
+                        console.log("[THUMB] flip failed, using unflipped: " + err.message);
+                        renderThumbImage(el.dataUrl);
+                    });
+                } else {
+                    renderThumbImage(thumbImgUrl);
+                }
             }
             if (el.type === "text" && el.text.trim()) {
                 // Use the same text layout path as main slide to avoid thumbnail-only drift.
