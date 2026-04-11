@@ -70,33 +70,61 @@ async function svgToPngDataUrl(svgText) {
     });
 }
 
-export async function loadImageAsDataUrl(zip, basePath, target) {
-    if (!target) return null;
-    var fullPath = (basePath + target).replace(/[^/]+\/\.\.\//g, "");
-    var f = zip.file(fullPath);
-    if (!f) return null;
-    try {
-        var ext = fullPath.split(".").pop().toLowerCase();
-        if (ext === "svg") {
-            var svgText = await f.async("string");
-            return await svgToPngDataUrl(svgText);
-        }
-        var blob = await f.async("blob");
-        var mime = (ext === "jpg" || ext === "jpeg") ? "image/jpeg" :
-            ext === "gif" ? "image/gif" : "image/png";
-        return await new Promise(function (res) {
-            var rd = new FileReader();
-            rd.onload = function () { res(rd.result); };
-            rd.readAsDataURL(new Blob([blob], { type: mime }));
-        });
-    } catch (e) { return null; }
+// Per-parse-session cache: fullPath -> Promise<imageUrl|null>.
+// Storing the Promise (not the resolved value) prevents duplicate decompression
+// work when many slides load the same file concurrently via Promise.all.
+// Call clearImageCache() at the start of each parsePptx() call.
+var _imageCache = {};
+var _objectUrls = [];
+
+export function clearImageCache() {
+    _objectUrls.forEach(function (url) {
+        try { URL.revokeObjectURL(url); } catch (e) {}
+    });
+    _objectUrls = [];
+    _imageCache = {};
 }
 
-// Build image map {rId: dataUrl} for a set of image relationships
-export async function buildImageMap(zip, basePath, imageRels) {
-    var map = {};
-    for (var rId in imageRels) {
-        map[rId] = await loadImageAsDataUrl(zip, basePath, imageRels[rId]);
+// Returns a Promise<string|null>.  Not declared async so that the cached Promise
+// is returned directly without an extra wrapper Promise.
+export function loadImageAsDataUrl(zip, basePath, target) {
+    if (!target) return Promise.resolve(null);
+    var fullPath = (basePath + target).replace(/[^/]+\/\.\.\//g, "");
+    if (fullPath in _imageCache) return _imageCache[fullPath];
+    // Store the promise immediately — any concurrent call for the same path will
+    // read this entry and share the same decompression work.
+    var f = zip.file(fullPath);
+    if (!f) {
+        _imageCache[fullPath] = Promise.resolve(null);
+        return _imageCache[fullPath];
     }
+    var ext = fullPath.split(".").pop().toLowerCase();
+    var p;
+    if (ext === "svg") {
+        p = f.async("string").then(svgToPngDataUrl).catch(function() { return null; });
+    } else {
+        var mime = (ext === "jpg" || ext === "jpeg") ? "image/jpeg" :
+            ext === "gif" ? "image/gif" : "image/png";
+        p = f.async("uint8array").then(function(bytes) {
+            var url = URL.createObjectURL(new Blob([bytes], { type: mime }));
+            _objectUrls.push(url);
+            return url;
+        }).catch(function() { return null; });
+    }
+    _imageCache[fullPath] = p;
+    return p;
+}
+
+// Build image map {rId: imageUrl} for a set of image relationships.
+// All images in a slide are resolved in parallel via Promise.all().
+export async function buildImageMap(zip, basePath, imageRels) {
+    var rIds = Object.keys(imageRels);
+    var dataUrls = await Promise.all(
+        rIds.map(function (rId) {
+            return loadImageAsDataUrl(zip, basePath, imageRels[rId]);
+        })
+    );
+    var map = {};
+    rIds.forEach(function (rId, i) { map[rId] = dataUrls[i]; });
     return map;
 }

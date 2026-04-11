@@ -27,6 +27,27 @@ import { renderSlide, buildThumbnails, updateThumbs, updateNotes, updateStatus }
 
 var canvas = document.getElementById("renderCanvas");
 
+function ensurePerfStore() {
+    if (typeof window === "undefined") return null;
+    if (!window.__PPTX_PERF__ || typeof window.__PPTX_PERF__ !== "object") {
+        window.__PPTX_PERF__ = {};
+    }
+    if (!Array.isArray(window.__PPTX_PERF__.sessions)) window.__PPTX_PERF__.sessions = [];
+    if (window.__PPTX_PERF__.lastLoad === undefined) window.__PPTX_PERF__.lastLoad = null;
+    if (window.__PPTX_PERF__.lastRender === undefined) window.__PPTX_PERF__.lastRender = null;
+    if (window.__PPTX_PERF__.lastThumbBuild === undefined) window.__PPTX_PERF__.lastThumbBuild = null;
+    if (window.__PPTX_PERF__.lastParse === undefined) window.__PPTX_PERF__.lastParse = null;
+    return window.__PPTX_PERF__;
+}
+
+function recordPerfSession(session) {
+    var store = ensurePerfStore();
+    if (!store) return;
+    store.lastLoad = session;
+    store.sessions.push(session);
+    if (store.sessions.length > 20) store.sessions.shift();
+}
+
 var AppError = function(code, userMsg, devMsg) {
     this.code = code;  // e.g., 'CANVAS_NOT_FOUND', 'ENGINE_INIT_FAIL', 'JSZIP_LOAD_FAIL', 'SCENE_BUILD_FAIL'
     this.userMsg = userMsg;  // user-facing message for UI
@@ -62,22 +83,40 @@ var scene = null;
 var sceneToRender = null;
 var createDefaultEngine = function () { return new BABYLON.Engine(canvas, true, { preserveDrawingBuffer: true, stencil: true, disableWebGL2Support: false }); };
 
+function resolveJsZipConstructor() {
+    if (typeof globalThis === "undefined") return null;
+    var candidate = globalThis.JSZip;
+    if (typeof candidate === "function") return candidate;
+    if (candidate && typeof candidate.default === "function") return candidate.default;
+    if (candidate && typeof candidate.JSZip === "function") return candidate.JSZip;
+    return null;
+}
+
 function ensureJsZipLoaded() {
     // JSZip is loaded statically via <script> in index.html
     // This function validates that it loaded correctly
-    if (!window.JSZip || typeof window.JSZip !== "function") {
+    var JsZipCtor = resolveJsZipConstructor();
+    if (!JsZipCtor) {
         throw new AppError(
             'JSZIP_LOAD_FAIL',
             'File library (JSZip) not available. Check that libs/jszip.min.js is present.',
-            'window.JSZip is not defined or not a constructor'
+            'JSZip constructor could not be resolved from globalThis.JSZip'
         );
     }
-    var testZip = new window.JSZip();
-    if (typeof testZip.loadAsync !== "function") {
+
+    // Normalize for downstream code paths that expect a global constructor.
+    globalThis.JSZip = JsZipCtor;
+
+    var hasLoadAsync = typeof JsZipCtor.loadAsync === "function";
+    if (!hasLoadAsync) {
+        var testZip = new JsZipCtor();
+        hasLoadAsync = typeof testZip.loadAsync === "function";
+    }
+    if (!hasLoadAsync) {
         throw new AppError(
             'JSZIP_LOAD_FAIL',
             'File library loaded but is incompatible. Try clearing browser cache.',
-            'JSZip.loadAsync is not a function – version may be incompatible'
+            'Resolved JSZip constructor does not expose loadAsync (static or instance)'
         );
     }
     console.log("[INIT/JSZIP] JSZip validated OK");
@@ -221,14 +260,59 @@ function registerInputPhase(sceneInstance, app) {
 
         app.gui.titleText.text = "Loading: " + file.name + "...";
         try {
+            var perfSession = {
+                fileName: file.name,
+                startedAt: performance.now()
+            };
             var ab = await file.arrayBuffer();
+            perfSession.arrayBufferMs = performance.now() - perfSession.startedAt;
             if (sceneInstance.isDisposed || myGen !== window.__pptxGen) return;
-            var ns = await parsePptx(ab);
+            var parseStart = performance.now();
+            // Phase 1 callback: called as soon as slide structure is parsed (no images yet).
+            // This lets the user see text/shapes immediately while images load in background.
+            var structureReadyCalled = false;
+            var ns = await parsePptx(ab,
+                function onStructureReady(partialSlides) {
+                    if (sceneInstance.isDisposed || myGen !== window.__pptxGen) return;
+                    if (partialSlides.length === 0) return;
+                    structureReadyCalled = true;
+                    app.slides = partialSlides; app.currentSlide = 0;
+                    buildThumbnails(app);
+                    renderSlide(app);
+                    updateThumbs(app); updateNotes(app); updateStatus(app);
+                    app.gui.titleText.text = file.name.replace(".pptx", "") + " - Loading images...";
+                },
+                function onSlideImagesReady(idx) {
+                    if (sceneInstance.isDisposed || myGen !== window.__pptxGen) return;
+                    if (idx === app.currentSlide) renderSlide(app);
+                },
+                function onAllImagesReady() {
+                    if (sceneInstance.isDisposed || myGen !== window.__pptxGen) return;
+                    if (!app.slides || app.slides.length === 0) return;
+                    buildThumbnails(app);
+                    renderSlide(app);
+                    updateThumbs(app); updateNotes(app); updateStatus(app);
+                    app.gui.titleText.text = file.name.replace(".pptx", "") + " - PowerPoint";
+                }
+            );
+            perfSession.parseMs = performance.now() - parseStart;
             if (sceneInstance.isDisposed || myGen !== window.__pptxGen) return;
             if (ns.length > 0) {
-                app.slides = ns; app.currentSlide = 0;
-                buildThumbnails(app); renderSlide(app); updateThumbs(app); updateNotes(app); updateStatus(app);
-                app.gui.titleText.text = file.name.replace(".pptx", "") + " - PowerPoint";
+                if (!structureReadyCalled) {
+                    app.slides = ns; app.currentSlide = 0;
+                    buildThumbnails(app);
+                    renderSlide(app);
+                    updateThumbs(app); updateNotes(app); updateStatus(app);
+                }
+                perfSession.totalMs = performance.now() - perfSession.startedAt;
+                recordPerfSession(perfSession);
+                console.info(
+                    "[PERF] load " + file.name +
+                    " total=" + perfSession.totalMs.toFixed(1) + "ms" +
+                    " arrayBuffer=" + perfSession.arrayBufferMs.toFixed(1) + "ms" +
+                    " parse(phase1)=" + perfSession.parseMs.toFixed(1) + "ms"
+                );
+                if (!structureReadyCalled) app.gui.titleText.text = file.name.replace(".pptx", "") + " - Loading images...";
             }
         } catch (err) {
             console.error("PPTX parse error:", err);

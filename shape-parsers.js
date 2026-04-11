@@ -409,7 +409,7 @@ function parsePic(pic, elements, slideW, slideH, images, relsAll, hasBgImage, bg
     var blip = pic.getElementsByTagNameNS(A_NS, "blip")[0];
     if (!blip) return;
     var rId = blip.getAttribute("r:embed") || blip.getAttributeNS(R_NS, "embed");
-    if (!rId || !images[rId]) return;
+    if (!rId) return;
 
     // Prefer exact relId matching when background image source is known.
     if (hasBgImage && bgImageRid && rId === bgImageRid) {
@@ -448,9 +448,9 @@ function parsePic(pic, elements, slideW, slideH, images, relsAll, hasBgImage, bg
         if (Number.isFinite(amt)) opacity = Math.max(0, Math.min(1, amt / 100000));
     }
 
-    var imgDataUrl = images[rId];
+    var imgDataUrl = images ? images[rId] : null;
     elements.push(normalizeElement({
-        type: "image", dataUrl: imgDataUrl,
+        type: "image", dataUrl: imgDataUrl, rId: rId,
         x: fracX, y: fracY, w: fracW, h: fracH,
         rotation: rotDeg,
         flipH: flipH,

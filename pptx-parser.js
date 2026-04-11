@@ -4,12 +4,20 @@
 
 import { SLIDE_EMU_W, SLIDE_EMU_H, A_NS } from "./constants.js";
 import { parseThemeXml, resolveColor } from "./color-utils.js";
-import { parseRelsFile, buildImageMap, loadImageAsDataUrl } from "./zip-helpers.js";
+import { parseRelsFile, buildImageMap, loadImageAsDataUrl, clearImageCache } from "./zip-helpers.js";
 import { extractBackground, extractBlipEffects } from "./background.js";
 import { extractPlaceholderStyles, extractMasterTxStyles } from "./style-inheritance.js";
 import { parseSlideXml } from "./slide-parser.js";
 
 var C_NS = "http://schemas.openxmlformats.org/drawingml/2006/chart";
+
+function perfNow() {
+    return (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
+}
+
+function pushPerfStep(list, name, startedAt) {
+    list.push({ name: name, ms: perfNow() - startedAt });
+}
 
 function getChartText(node) {
     if (!node) return "";
@@ -315,18 +323,25 @@ async function buildDiagramDataMap(zip, slideBasePath, relsAll) {
     return map;
 }
 
-async function parsePptx(arrayBuffer) {
-    var t0 = performance.now();
+async function parsePptx(arrayBuffer, onStructureReady, onSlideImagesReady, onAllImagesReady) {
+    var t0 = perfNow();
+    var perfSummary = { totalMs: 0, steps: [], slides: [] };
     console.log("[PPTX] === Starting PPTX parse ===");
+    clearImageCache();
     var zip = new JSZip();
+    var stepStart = perfNow();
     await zip.loadAsync(arrayBuffer);
+    pushPerfStep(perfSummary.steps, "zip.loadAsync", stepStart);
     console.log("[PPTX] ZIP loaded, files: " + Object.keys(zip.files).length);
 
     // Parse theme colors
+    stepStart = perfNow();
     await parseThemeXml(zip);
+    pushPerfStep(perfSummary.steps, "parseThemeXml", stepStart);
 
     // Slide dimensions
     var slideW = SLIDE_EMU_W, slideH = SLIDE_EMU_H;
+    stepStart = perfNow();
     var pf = zip.file("ppt/presentation.xml");
     if (pf) {
         var pdoc = new DOMParser().parseFromString(await pf.async("string"), "application/xml");
@@ -336,19 +351,31 @@ async function parsePptx(arrayBuffer) {
             slideH = parseInt(ss.getAttribute("cy")) || SLIDE_EMU_H;
         }
     }
+    pushPerfStep(perfSummary.steps, "presentation.xml", stepStart);
     console.log("[PPTX] Slide dimensions: " + slideW + " x " + slideH + " EMU");
 
     // Enumerate slides
+    stepStart = perfNow();
     var slideFiles = [];
     zip.forEach(function (path) {
         var m = path.match(/^ppt\/slides\/slide(\d+)\.xml$/);
         if (m) slideFiles.push({ path: path, num: parseInt(m[1]) });
     });
     slideFiles.sort(function (a, b) { return a.num - b.num; });
+    pushPerfStep(perfSummary.steps, "enumerateSlides", stepStart);
     console.log("[PPTX] Found " + slideFiles.length + " slides: " + slideFiles.map(function(s){return "slide"+s.num;}).join(", "));
 
     // Background cache for layout/master
     var bgCache = {};
+    var layoutStylesCache = {};
+    var masterTxStylesCache = {};
+    var relsCache = {};
+
+    async function getRelsCached(relsPath) {
+        if (relsCache[relsPath] !== undefined) return relsCache[relsPath];
+        relsCache[relsPath] = await parseRelsFile(zip, relsPath);
+        return relsCache[relsPath];
+    }
 
     async function getLayerBackground(xmlPath, relsPath, basePath) {
         if (bgCache[xmlPath] !== undefined) return bgCache[xmlPath];
@@ -365,24 +392,37 @@ async function parsePptx(arrayBuffer) {
     var newSlides = [];
     for (var i = 0; i < slideFiles.length; i++) {
         var sf = slideFiles[i];
+        var slidePerf = { slide: sf.num, steps: [], totalMs: 0 };
+        var slideStart = perfNow();
+        stepStart = perfNow();
         var xmlStr = await zip.file(sf.path).async("string");
         var slideRels = await parseRelsFile(zip, "ppt/slides/_rels/slide" + sf.num + ".xml.rels");
+        pushPerfStep(slidePerf.steps, "slideXml+rels", stepStart);
         console.log("[PPTX] Slide " + sf.num + " rels: images=" + Object.keys(slideRels.images).length + " layout=" + (slideRels.layout||"none"));
         console.log("[PPTX]   all rels: " + JSON.stringify(slideRels.all));
 
         // Build image map
-        var images = await buildImageMap(zip, "ppt/slides/", slideRels.images);
-        console.log("[PPTX] Slide " + sf.num + " images loaded: " + Object.keys(images).filter(function(k){return !!images[k];}).length);
+        stepStart = perfNow();
+        // Image loading is deferred to phase 2 (parallel across all slides).
+        var images = {};
+        pushPerfStep(slidePerf.steps, "buildImageMap", stepStart);
+        // Accumulate image-loading context; filled as layout/master paths are resolved.
+        var _ctxLayoutBase = null, _ctxLayoutImageRels = {}, _ctxMasterBase = null, _ctxMasterImageRels = {};
 
         // Build chart data map from related chart parts
+        stepStart = perfNow();
         var chartDataMap = await buildChartDataMap(zip, "ppt/slides/", slideRels.all);
         var diagramDataMap = await buildDiagramDataMap(zip, "ppt/slides/", slideRels.all);
+        pushPerfStep(slidePerf.steps, "buildChart+DiagramData", stepStart);
 
         // === Background inheritance: slide → layout → master ===
+        stepStart = perfNow();
         var bgResult = await extractBackground(xmlStr, zip, "ppt/slides/", slideRels.all, slideW, slideH);
+        pushPerfStep(slidePerf.steps, "extractBackground", stepStart);
         console.log("[PPTX] Slide " + sf.num + " bg chain: slide=" + (bgResult ? (typeof bgResult === "string" ? "image" : JSON.stringify(bgResult)) : "none"));
 
         if (!bgResult && slideRels.layout) {
+            stepStart = perfNow();
             var layoutPath = ("ppt/slides/" + slideRels.layout).replace(/[^/]+\/\.\.\//g, "");
             console.log("[PPTX]   checking layout: " + layoutPath);
             var layoutBase = layoutPath.replace(/[^/]*$/, "");
@@ -401,6 +441,7 @@ async function parsePptx(arrayBuffer) {
                 bgResult = masterData.bg;
                 console.log("[PPTX]   master bg=" + (bgResult ? (typeof bgResult === "string" ? "image" : JSON.stringify(bgResult)) : "none"));
             }
+            pushPerfStep(slidePerf.steps, "backgroundInheritance", stepStart);
         }
 
         var hasBgImage = !!(bgResult && (typeof bgResult === "string" || (typeof bgResult === "object" && !!bgResult.image)));
@@ -413,14 +454,27 @@ async function parsePptx(arrayBuffer) {
         var layoutStyles = {};
         var masterTxStyles = { titleColor: null, bodyColor: null, otherColor: null };
         if (slideRels.layout) {
+            stepStart = perfNow();
             var layoutPathStyles = ("ppt/slides/" + slideRels.layout).replace(/[^/]+\/\.\.\//g, "");
-            layoutStyles = await extractPlaceholderStyles(zip, layoutPathStyles);
             // Also read master txStyles
-            var layoutRelsForMaster = await parseRelsFile(zip, layoutPathStyles.replace(/([^/]+)$/, "_rels/$1.rels"));
+            if (layoutStylesCache[layoutPathStyles]) {
+                layoutStyles = layoutStylesCache[layoutPathStyles];
+            } else {
+                layoutStyles = await extractPlaceholderStyles(zip, layoutPathStyles);
+                layoutStylesCache[layoutPathStyles] = layoutStyles;
+            }
+            var layoutRelsPathStyles = layoutPathStyles.replace(/([^/]+)$/, "_rels/$1.rels");
+            var layoutRelsForMaster = await getRelsCached(layoutRelsPathStyles);
             if (layoutRelsForMaster.master) {
                 var masterPathTx = (layoutPathStyles.replace(/[^/]*$/, "") + layoutRelsForMaster.master).replace(/[^/]+\/\.\.\//g, "");
-                masterTxStyles = await extractMasterTxStyles(zip, masterPathTx);
+                if (masterTxStylesCache[masterPathTx]) {
+                    masterTxStyles = masterTxStylesCache[masterPathTx];
+                } else {
+                    masterTxStyles = await extractMasterTxStyles(zip, masterPathTx);
+                    masterTxStylesCache[masterPathTx] = masterTxStyles;
+                }
             }
+            pushPerfStep(slidePerf.steps, "extractLayoutStyles", stepStart);
         }
         // Apply master txStyles as fallback fontRefColor for placeholders.
         // Body/other text should still inherit master colors on bg-image slides.
@@ -452,8 +506,11 @@ async function parsePptx(arrayBuffer) {
             if (!layoutStyles.subTitle) layoutStyles.subTitle = {};
             if (!layoutStyles.subTitle.color) layoutStyles.subTitle.fontRefColor = masterTxStyles.phFontRef.body;
         }
+        stepStart = perfNow();
         var parsed = parseSlideXml(xmlStr, slideW, slideH, images, slideRels.all, hasBgImage, bgImageRid, false, layoutStyles, chartDataMap, diagramDataMap, "slide");
+        pushPerfStep(slidePerf.steps, "parseSlideXml(slide)", stepStart);
         console.log("[PPTX] Slide " + sf.num + " own elements: " + parsed.elements.length);
+    parsed.elements.forEach(function(el) { if (el.type === "image" && el.rId) el._imgSrc = "slide"; });
 
         // Parse layout shapes (non-placeholder decorations only)
         if (slideRels.layout) {
@@ -461,31 +518,39 @@ async function parsePptx(arrayBuffer) {
             var layoutBase2 = layoutPath2.replace(/[^/]*$/, "");
             var layoutFile = zip.file(layoutPath2);
             if (layoutFile) {
+                stepStart = perfNow();
                 console.log("[PPTX] Parsing layout shapes for slide " + sf.num + ": " + layoutPath2);
-                var layoutRels2 = await parseRelsFile(zip, layoutPath2.replace(/([^/]+)$/, "_rels/$1.rels"));
-                var layoutImgs = await buildImageMap(zip, layoutBase2, layoutRels2.images);
+                var layoutRels2 = await getRelsCached(layoutPath2.replace(/([^/]+)$/, "_rels/$1.rels"));
                 var layoutParsed = parseSlideXml(
-                    await layoutFile.async("string"), slideW, slideH, layoutImgs, layoutRels2.all, hasBgImage, null, true, {}, {}, {}, "layout"
+                    await layoutFile.async("string"), slideW, slideH, {}, layoutRels2.all, hasBgImage, null, true, {}, {}, {}, "layout"
                 );
+                layoutParsed.elements.forEach(function(el) { if (el.type === "image" && el.rId) el._imgSrc = "layout"; });
                 console.log("[PPTX]   layout contributed " + layoutParsed.elements.length + " elements");
                 parsed.elements = layoutParsed.elements.concat(parsed.elements);
+                pushPerfStep(slidePerf.steps, "parseSlideXml(layout)", stepStart);
+                            _ctxLayoutBase = layoutBase2;
+                            _ctxLayoutImageRels = layoutRels2.images;
             }
 
             // Parse master shapes (non-placeholder decorations only)
-            var layoutRelsForMasterShapes = await parseRelsFile(zip, layoutPath2.replace(/([^/]+)$/, "_rels/$1.rels"));
+            var layoutRelsForMasterShapes = await getRelsCached(layoutPath2.replace(/([^/]+)$/, "_rels/$1.rels"));
             if (layoutRelsForMasterShapes.master) {
                 var masterPath2 = (layoutBase2 + layoutRelsForMasterShapes.master).replace(/[^/]+\/\.\.\//g, "");
                 var masterBase2 = masterPath2.replace(/[^/]*$/, "");
                 var masterFile = zip.file(masterPath2);
                 if (masterFile) {
+                    stepStart = perfNow();
                     console.log("[PPTX] Parsing master shapes for slide " + sf.num + ": " + masterPath2);
-                    var masterRels2 = await parseRelsFile(zip, masterPath2.replace(/([^/]+)$/, "_rels/$1.rels"));
-                    var masterImgs = await buildImageMap(zip, masterBase2, masterRels2.images);
+                    var masterRels2 = await getRelsCached(masterPath2.replace(/([^/]+)$/, "_rels/$1.rels"));
                     var masterParsed = parseSlideXml(
-                        await masterFile.async("string"), slideW, slideH, masterImgs, masterRels2.all, hasBgImage, null, true, {}, {}, {}, "master"
+                        await masterFile.async("string"), slideW, slideH, {}, masterRels2.all, hasBgImage, null, true, {}, {}, {}, "master"
                     );
+                    masterParsed.elements.forEach(function(el) { if (el.type === "image" && el.rId) el._imgSrc = "master"; });
                     console.log("[PPTX]   master contributed " + masterParsed.elements.length + " elements");
                     parsed.elements = masterParsed.elements.concat(parsed.elements);
+                    pushPerfStep(slidePerf.steps, "parseSlideXml(master)", stepStart);
+                                    _ctxMasterBase = masterBase2;
+                                    _ctxMasterImageRels = masterRels2.images;
                 }
             }
         }
@@ -516,8 +581,80 @@ async function parsePptx(arrayBuffer) {
         console.log("[PPTX]   breakdown: shapes=" + elSummary.shape + " texts=" + elSummary.text + " images=" + elSummary.image);
 
         newSlides.push(slide);
+                // Store context needed for deferred image loading in phase 2.
+                slide._ctx = {
+                    imageRels: slideRels.images,
+                    imageBasePath: "ppt/slides/",
+                    layoutBase: _ctxLayoutBase,
+                    layoutImageRels: _ctxLayoutImageRels,
+                    masterBase: _ctxMasterBase,
+                    masterImageRels: _ctxMasterImageRels
+                };
+        slidePerf.totalMs = perfNow() - slideStart;
+        perfSummary.slides.push(slidePerf);
     }
-    console.log("[PPTX] === Parse complete: " + newSlides.length + " slides in " + (performance.now()-t0).toFixed(0) + "ms ===");
+    // Phase 1 complete — fire callback so UI can display structure without images.
+    if (typeof onStructureReady === "function") {
+        try { onStructureReady(newSlides); } catch(e) {}
+    }
+
+    perfSummary.totalMs = perfNow() - t0;
+    if (typeof window !== "undefined") {
+        window.__PPTX_PERF__ = window.__PPTX_PERF__ || {};
+        window.__PPTX_PERF__.lastParsePhase2ImagesMs = null;
+        window.__PPTX_PERF__.lastParse = perfSummary;
+    }
+    console.info("[PERF] parsePptx total=" + perfSummary.totalMs.toFixed(1) + "ms slides=" + perfSummary.slides.length);
+    perfSummary.steps.forEach(function (step) {
+        console.info("[PERF] parse step " + step.name + "=" + step.ms.toFixed(1) + "ms");
+    });
+    perfSummary.slides.forEach(function (sp) {
+        console.info("[PERF] slide " + sp.slide + " total=" + sp.totalMs.toFixed(1) + "ms");
+        sp.steps.forEach(function (step) {
+            console.info("[PERF] slide " + sp.slide + " " + step.name + "=" + step.ms.toFixed(1) + "ms");
+        });
+    });
+    console.log("[PPTX] === Parse phase1 complete: " + newSlides.length + " slides in " + perfSummary.totalMs.toFixed(0) + "ms ===");
+
+    // Phase 2 — load all slide images concurrently across every slide.
+    // Start this in background so parsePptx can return immediately after phase 1.
+    var phase2Start = perfNow();
+    Promise.all(newSlides.map(function(slide, idx) {
+        var ctx = slide._ctx;
+        if (!ctx) return Promise.resolve();
+        delete slide._ctx;
+        return Promise.all([
+            buildImageMap(zip, ctx.imageBasePath, ctx.imageRels),
+            ctx.layoutBase ? buildImageMap(zip, ctx.layoutBase, ctx.layoutImageRels) : Promise.resolve({}),
+            ctx.masterBase ? buildImageMap(zip, ctx.masterBase, ctx.masterImageRels) : Promise.resolve({})
+        ]).then(function(maps) {
+            var slideImgs = maps[0], layoutImgs = maps[1], masterImgs = maps[2];
+            slide.elements.forEach(function(el) {
+                if (el.type !== "image" || !el.rId) return;
+                var map = el._imgSrc === "layout" ? layoutImgs
+                        : el._imgSrc === "master"  ? masterImgs
+                        : slideImgs;
+                el.dataUrl = map[el.rId] || null;
+                delete el._imgSrc; delete el.rId;
+            });
+            if (typeof onSlideImagesReady === "function") {
+                try { onSlideImagesReady(idx); } catch(e) {}
+            }
+        });
+    })).then(function () {
+        var phase2Ms = perfNow() - phase2Start;
+        if (typeof window !== "undefined") {
+            window.__PPTX_PERF__ = window.__PPTX_PERF__ || {};
+            window.__PPTX_PERF__.lastParsePhase2ImagesMs = phase2Ms;
+        }
+        console.info("[PERF] phase2 images ms=" + phase2Ms.toFixed(1));
+        if (typeof onAllImagesReady === "function") {
+            try { onAllImagesReady(); } catch(e) {}
+        }
+    }).catch(function (e) {
+        console.warn("[PPTX] phase2 image loading failed", e);
+    });
+
     return newSlides;
 }
 
