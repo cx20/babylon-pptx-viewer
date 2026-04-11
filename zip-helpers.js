@@ -92,14 +92,13 @@ export async function loadImageAsDataUrl(zip, basePath, target) {
             var svgText = await f.async("string");
             result = await svgToPngDataUrl(svgText);
         } else {
-            var blob = await f.async("blob");
             var mime = (ext === "jpg" || ext === "jpeg") ? "image/jpeg" :
                 ext === "gif" ? "image/gif" : "image/png";
-            result = await new Promise(function (res) {
-                var rd = new FileReader();
-                rd.onload = function () { res(rd.result); };
-                rd.readAsDataURL(new Blob([blob], { type: mime }));
-            });
+            // Use JSZip's native base64 output to skip Blob + FileReader entirely.
+            // FileReader.readAsDataURL is CPU-bound on the main thread and is the
+            // primary bottleneck, especially in sandboxed environments (Playground).
+            var b64 = await f.async("base64");
+            result = "data:" + mime + ";base64," + b64;
         }
         _imageCache[fullPath] = result;
         return result;
