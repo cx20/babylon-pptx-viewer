@@ -70,33 +70,52 @@ async function svgToPngDataUrl(svgText) {
     });
 }
 
+// Per-parse-session cache: fullPath -> dataUrl (avoids re-converting the same
+// image file when it appears in multiple slides / layout / master).
+// Call clearImageCache() at the start of each parsePptx() call.
+var _imageCache = {};
+
+export function clearImageCache() {
+    _imageCache = {};
+}
+
 export async function loadImageAsDataUrl(zip, basePath, target) {
     if (!target) return null;
     var fullPath = (basePath + target).replace(/[^/]+\/\.\.\//g, "");
+    if (fullPath in _imageCache) return _imageCache[fullPath];
     var f = zip.file(fullPath);
-    if (!f) return null;
+    if (!f) { _imageCache[fullPath] = null; return null; }
     try {
         var ext = fullPath.split(".").pop().toLowerCase();
+        var result;
         if (ext === "svg") {
             var svgText = await f.async("string");
-            return await svgToPngDataUrl(svgText);
+            result = await svgToPngDataUrl(svgText);
+        } else {
+            var blob = await f.async("blob");
+            var mime = (ext === "jpg" || ext === "jpeg") ? "image/jpeg" :
+                ext === "gif" ? "image/gif" : "image/png";
+            result = await new Promise(function (res) {
+                var rd = new FileReader();
+                rd.onload = function () { res(rd.result); };
+                rd.readAsDataURL(new Blob([blob], { type: mime }));
+            });
         }
-        var blob = await f.async("blob");
-        var mime = (ext === "jpg" || ext === "jpeg") ? "image/jpeg" :
-            ext === "gif" ? "image/gif" : "image/png";
-        return await new Promise(function (res) {
-            var rd = new FileReader();
-            rd.onload = function () { res(rd.result); };
-            rd.readAsDataURL(new Blob([blob], { type: mime }));
-        });
-    } catch (e) { return null; }
+        _imageCache[fullPath] = result;
+        return result;
+    } catch (e) { _imageCache[fullPath] = null; return null; }
 }
 
-// Build image map {rId: dataUrl} for a set of image relationships
+// Build image map {rId: dataUrl} for a set of image relationships.
+// All images in a slide are resolved in parallel via Promise.all().
 export async function buildImageMap(zip, basePath, imageRels) {
+    var rIds = Object.keys(imageRels);
+    var dataUrls = await Promise.all(
+        rIds.map(function (rId) {
+            return loadImageAsDataUrl(zip, basePath, imageRels[rId]);
+        })
+    );
     var map = {};
-    for (var rId in imageRels) {
-        map[rId] = await loadImageAsDataUrl(zip, basePath, imageRels[rId]);
-    }
+    rIds.forEach(function (rId, i) { map[rId] = dataUrls[i]; });
     return map;
 }

@@ -169,6 +169,21 @@ Typical successful startup sequence:
 
 ## Troubleshooting
 
+### Using with Babylon.js Playground
+
+The local build loads JSZip as a UMD global via `<script src="libs/jszip.min.js">`.
+When copying `index.js` to [Babylon.js Playground](https://playground.babylonjs.com/), JSZip must be
+imported as an ES module and exposed on `globalThis` before the viewer code runs.
+
+Add the following lines **at the top of the Playground script** (before any viewer code):
+
+```js
+import JSZipModule from "jszip@3.10.1/es2022/jszip.mjs";
+globalThis.JSZip = JSZipModule?.default || JSZipModule;
+```
+
+Without this, `ensureJsZipLoaded()` will throw `JSZIP_LOAD_FAIL: JSZip.loadAsync is not a function`.
+
 ### File library (JSZip) error
 
 - Confirm libs/jszip.min.js exists.
