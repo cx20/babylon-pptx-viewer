@@ -70,42 +70,52 @@ async function svgToPngDataUrl(svgText) {
     });
 }
 
-// Per-parse-session cache: fullPath -> dataUrl (avoids re-converting the same
-// image file when it appears in multiple slides / layout / master).
+// Per-parse-session cache: fullPath -> Promise<imageUrl|null>.
+// Storing the Promise (not the resolved value) prevents duplicate decompression
+// work when many slides load the same file concurrently via Promise.all.
 // Call clearImageCache() at the start of each parsePptx() call.
 var _imageCache = {};
+var _objectUrls = [];
 
 export function clearImageCache() {
+    _objectUrls.forEach(function (url) {
+        try { URL.revokeObjectURL(url); } catch (e) {}
+    });
+    _objectUrls = [];
     _imageCache = {};
 }
 
-export async function loadImageAsDataUrl(zip, basePath, target) {
-    if (!target) return null;
+// Returns a Promise<string|null>.  Not declared async so that the cached Promise
+// is returned directly without an extra wrapper Promise.
+export function loadImageAsDataUrl(zip, basePath, target) {
+    if (!target) return Promise.resolve(null);
     var fullPath = (basePath + target).replace(/[^/]+\/\.\.\//g, "");
     if (fullPath in _imageCache) return _imageCache[fullPath];
+    // Store the promise immediately — any concurrent call for the same path will
+    // read this entry and share the same decompression work.
     var f = zip.file(fullPath);
-    if (!f) { _imageCache[fullPath] = null; return null; }
-    try {
-        var ext = fullPath.split(".").pop().toLowerCase();
-        var result;
-        if (ext === "svg") {
-            var svgText = await f.async("string");
-            result = await svgToPngDataUrl(svgText);
-        } else {
-            var mime = (ext === "jpg" || ext === "jpeg") ? "image/jpeg" :
-                ext === "gif" ? "image/gif" : "image/png";
-            // Use JSZip's native base64 output to skip Blob + FileReader entirely.
-            // FileReader.readAsDataURL is CPU-bound on the main thread and is the
-            // primary bottleneck, especially in sandboxed environments (Playground).
-            var b64 = await f.async("base64");
-            result = "data:" + mime + ";base64," + b64;
-        }
-        _imageCache[fullPath] = result;
-        return result;
-    } catch (e) { _imageCache[fullPath] = null; return null; }
+    if (!f) {
+        _imageCache[fullPath] = Promise.resolve(null);
+        return _imageCache[fullPath];
+    }
+    var ext = fullPath.split(".").pop().toLowerCase();
+    var p;
+    if (ext === "svg") {
+        p = f.async("string").then(svgToPngDataUrl).catch(function() { return null; });
+    } else {
+        var mime = (ext === "jpg" || ext === "jpeg") ? "image/jpeg" :
+            ext === "gif" ? "image/gif" : "image/png";
+        p = f.async("uint8array").then(function(bytes) {
+            var url = URL.createObjectURL(new Blob([bytes], { type: mime }));
+            _objectUrls.push(url);
+            return url;
+        }).catch(function() { return null; });
+    }
+    _imageCache[fullPath] = p;
+    return p;
 }
 
-// Build image map {rId: dataUrl} for a set of image relationships.
+// Build image map {rId: imageUrl} for a set of image relationships.
 // All images in a slide are resolved in parallel via Promise.all().
 export async function buildImageMap(zip, basePath, imageRels) {
     var rIds = Object.keys(imageRels);

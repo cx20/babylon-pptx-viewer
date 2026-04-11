@@ -316,6 +316,7 @@ function getEffectiveImageAlpha(el, slideHasBgImage) {
 // Render the current slide onto the main canvas
 export function renderSlide(app) {
     if (app.scene.isDisposed) return;
+    var renderStartedAt = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
     var sLayer = app.gui.sLayer;
     sLayer.clearControls();
     var slide = app.slides[app.currentSlide];
@@ -475,6 +476,17 @@ export function renderSlide(app) {
             renderTextElement(el, sLayer, CANVAS_W, CANVAS_H, FONT_SCALE);
         }
     });
+
+    var renderMs = ((typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now()) - renderStartedAt;
+    if (typeof window !== "undefined") {
+        window.__PPTX_PERF__ = window.__PPTX_PERF__ || {};
+        window.__PPTX_PERF__.lastRender = {
+            slideIndex: app.currentSlide,
+            elementCount: slide.elements.length,
+            ms: renderMs
+        };
+    }
+    console.info("[PERF] renderSlide slide=" + (app.currentSlide + 1) + " elements=" + slide.elements.length + " ms=" + renderMs.toFixed(1));
 }
 
 function renderImageElement(el, imgUrl, container, slideHasBgImage) {
@@ -494,6 +506,7 @@ function renderImageElement(el, imgUrl, container, slideHasBgImage) {
 // Build slide thumbnails in the sidebar
 export function buildThumbnails(app) {
     if (app.scene.isDisposed) return;
+    var thumbStartedAt = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
     var thumbC = app.gui.thumbC;
     thumbC.clearControls();
     app.thumbRects = [];
@@ -656,6 +669,16 @@ export function buildThumbnails(app) {
         })(idx);
         row.addControl(th); thumbC.addControl(row);
     });
+
+    var thumbMs = ((typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now()) - thumbStartedAt;
+    if (typeof window !== "undefined") {
+        window.__PPTX_PERF__ = window.__PPTX_PERF__ || {};
+        window.__PPTX_PERF__.lastThumbBuild = {
+            slideCount: app.slides.length,
+            ms: thumbMs
+        };
+    }
+    console.info("[PERF] buildThumbnails slides=" + app.slides.length + " ms=" + thumbMs.toFixed(1));
 }
 
 export function updateThumbs(app) {
