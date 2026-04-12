@@ -473,14 +473,31 @@ function parseCxnSp(cxn, elements, slideW, slideH, fx, fy) {
     // p:spPr is typically used for connector style/outline.
     var spPr = cxn.getElementsByTagNameNS(P_NS, "spPr")[0];
     if (!spPr) spPr = cxn.getElementsByTagNameNS(A_NS, "spPr")[0];
+    
+    // Get connector shape type (bentConnector3, curvedConnector3, etc.)
+    var geom = getPresetGeometry(spPr);
+    
     var ol = parseOutline(spPr);
-    console.log("[CXN] connector line color=" + (ol?ol.color:"#000") + " flipH=" + flipH + " flipV=" + flipV);
-    elements.push(normalizeElement({
-        type: "shape", shape: "line",
-        x1: fx(flipH ? x1 + w : x1), y1: fy(flipV ? y1 + h : y1),
-        x2: fx(flipH ? x1 : x1 + w), y2: fy(flipV ? y1 : y1 + h),
-        color: ol ? ol.color : "#000", thickness: ol ? ol.width : 1
-    }));
+    var fill = getShapeFill(spPr);
+    
+    // For bent/curved connectors, use the bounding box as a shape
+    if (geom && (geom.indexOf("bentConnector") >= 0 || geom.indexOf("curvedConnector") >= 0 || geom.indexOf("Connector") >= 0)) {
+        elements.push(normalizeElement({
+            type: "shape", shape: geom,
+            x: fx(x1), y: fy(y1), w: w / slideW, h: h / slideH,
+            fillColor: fill || (ol ? ol.color : "#ff0000"),
+            strokeColor: ol ? ol.color : "#ff0000",
+            thickness: ol ? ol.width : 2,
+            flipH: flipH, flipV: flipV
+        }));
+    } else {
+        elements.push(normalizeElement({
+            type: "shape", shape: "line",
+            x1: fx(flipH ? x1 + w : x1), y1: fy(flipV ? y1 + h : y1),
+            x2: fx(flipH ? x1 : x1 + w), y2: fy(flipV ? y1 : y1 + h),
+            color: ol ? ol.color : "#000", thickness: ol ? ol.width : 1
+        }));
+    }
 }
 
 // --- Parse grpSp (group shape) - RECURSIVE ---
