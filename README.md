@@ -37,12 +37,32 @@ You can use either of these approaches:
 1. Pin a fixed Babylon version and mirror that exact directory structure.
 2. Download Babylon release assets and serve them from your own CDN/server.
 
+## Robot PowerPoint Viewer
+
+An alternative viewer that renders slides on a 3D robot model with page-flip animation.
+
+### How To Run (Robot Version)
+
+1. Open this folder in VS Code.
+2. Start `index-robot.html` with Live Server.
+3. Drag and drop a .pptx file onto the screen.
+4. Use left/right arrows or on-screen buttons to navigate slides.
+
+The robot model is loaded from the Babylon.js asset library and includes:
+- Page flip animation when navigating between slides
+- Canvas 2D-based slide rendering on the robot's display
+- Support for rotated shapes and autoshapes
+- Text wrapping with overlap prevention
+
 ## Directory Structure
 
 ```text
 babylon-pptx-viewer/
 |- index.html
 |- index.js
+|- index-robot.html      # Robot viewer entry point
+|- index-robot.js        # Robot viewer main logic
+|- robot-scene-setup.js  # Robot model loading and animation
 |- constants.js
 |- color-utils.js
 |- zip-helpers.js
