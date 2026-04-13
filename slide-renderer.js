@@ -4,6 +4,9 @@
 
 import { CANVAS_W, CANVAS_H, PP, FONT_SCALE, ELLIPSE_SHAPES, ROUND_RECT_SHAPES } from "./constants.js";
 
+var THUMB_ROW_HEIGHT = 58;
+var THUMB_TOP_PADDING = 8;
+
 // Apply background tint overlay to a container
 function applyTintOverlay(container, bgTint, name) {
     if (!bgTint) return;
@@ -686,6 +689,50 @@ export function updateThumbs(app) {
         t.thickness = i === app.currentSlide ? 2 : 1;
         t.color = i === app.currentSlide ? PP : "#CCC";
     });
+
+    ensureCurrentThumbVisible(app);
+}
+
+function ensureCurrentThumbVisible(app) {
+    if (!app || !app.gui || !app.gui.thumbScroll) return;
+    var sv = app.gui.thumbScroll;
+    var bar = sv.verticalBar;
+    if (!bar) return;
+    if (!Array.isArray(app.slides) || app.slides.length === 0) return;
+
+    var index = Math.max(0, Math.min(app.currentSlide, app.slides.length - 1));
+    var viewportH = sv.heightInPixels;
+    if (!Number.isFinite(viewportH) || viewportH <= 0) return;
+
+    var rowTop = THUMB_TOP_PADDING + index * THUMB_ROW_HEIGHT;
+    var rowBottom = rowTop + THUMB_ROW_HEIGHT;
+
+    var min = Number.isFinite(bar.minimum) ? bar.minimum : 0;
+    var max = Number.isFinite(bar.maximum) ? bar.maximum : 1;
+    if (!(max > min)) return;
+
+    var value = Number.isFinite(bar.value) ? bar.value : min;
+
+    // Babylon GUI can expose bar values as normalized (0..1) or pixel-like units.
+    if (max <= 1.0001 && min >= -0.0001) {
+        var contentH = THUMB_TOP_PADDING + app.slides.length * THUMB_ROW_HEIGHT;
+        var scrollablePx = Math.max(0, contentH - viewportH);
+        if (scrollablePx <= 0) return;
+
+        var currentTopPx = value * scrollablePx;
+        var targetTopPx = currentTopPx;
+        if (rowTop < currentTopPx) targetTopPx = rowTop;
+        else if (rowBottom > currentTopPx + viewportH) targetTopPx = rowBottom - viewportH;
+
+        var normalized = targetTopPx / scrollablePx;
+        bar.value = Math.max(min, Math.min(max, normalized));
+        return;
+    }
+
+    var targetTop = value;
+    if (rowTop < value) targetTop = rowTop;
+    else if (rowBottom > value + viewportH) targetTop = rowBottom - viewportH;
+    bar.value = Math.max(min, Math.min(max, targetTop));
 }
 
 export function updateNotes(app) {
