@@ -101,9 +101,16 @@ export function buildGuiFrame(screenPlane) {
     mainArea.addControl(slidePanel, 0, 0);
     var pBdr = new BABYLON.GUI.Rectangle(); pBdr.width = "1px"; pBdr.background = "#D0D0D0"; pBdr.thickness = 0;
     pBdr.horizontalAlignment = BABYLON.GUI.Control.HORIZONTAL_ALIGNMENT_RIGHT; slidePanel.addControl(pBdr);
+    var thumbScroll = new BABYLON.GUI.ScrollViewer();
+    thumbScroll.width = "126px"; thumbScroll.height = "100%";
+    thumbScroll.thickness = 0; thumbScroll.background = "transparent";
+    thumbScroll.barSize = 8; thumbScroll.wheelPrecision = 30;
+    thumbScroll.verticalAlignment = BABYLON.GUI.Control.VERTICAL_ALIGNMENT_TOP;
+    slidePanel.addControl(thumbScroll);
     var thumbC = new BABYLON.GUI.StackPanel(); thumbC.isVertical = true;
     thumbC.verticalAlignment = BABYLON.GUI.Control.VERTICAL_ALIGNMENT_TOP;
-    thumbC.paddingTop = "8px"; thumbC.width = "126px"; slidePanel.addControl(thumbC);
+    thumbC.adaptHeightToChildren = true;
+    thumbC.paddingTop = "8px"; thumbC.width = "126px"; thumbScroll.addControl(thumbC);
 
     // Editor area
     var edArea = new BABYLON.GUI.Rectangle(); edArea.background = "#E0E0E0"; edArea.thickness = 0;
@@ -154,6 +161,7 @@ export function buildGuiFrame(screenPlane) {
     return {
         titleText: titleText,
         thumbC: thumbC,
+        thumbScroll: thumbScroll,
         sCanvas: sCanvas,
         sLayer: sLayer,
         notesText: notesText,
